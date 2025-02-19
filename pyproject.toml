@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "inspect-dynspec"
+version = "0.0.1"
+description = "Dynamic spectra normalisation and smoothing for DynSpecMS products"
+authors = ["Talon Myburgh"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "inspect_dynspec"}]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+stimela = "^2.0"
+astropy = "*"
+scipy = "*"
+ducc0 = "*"
+dask = "*"
+art = "*"
+numpy = "*"
+click = "*"
+matplotlib = "*"
+
+[tool.poetry.scripts]
+inspect-dynspec = "inspect_dynspec.inspect_dynspec:inspect_dynspec"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+## add section for dev component which installs builder and Dockerfiles

@@ -1,0 +1,94 @@
+cabs:
+  inspect_dynspec:
+    info: "Script to normalise and smooth the product produced by ms2dynspec."
+    backend:
+      select: native
+    command: inspect-dynspec
+    policies:
+      prefix: "--"
+    inputs:
+      input:
+        info: "Path to root input folder of ms2dynspec output"
+        dtype: str
+        required: true
+        must_exist: true
+      output:
+        info: "Output path. If does not exist, it will be created"
+        dtype: str
+        required: true
+        must_exist: false
+      kernel:
+        info: "Smoothing kernel FWHM size as tuples: (nu_delta (MHz), t_delta (s)) i.e. stimela run inspect_dynspec.yml kernel=[[2,3],[3,4]]"
+        dtype: List[Tuple[float,float]]
+        required: false
+        default: [1,1]
+        policies:
+          repeat: repeat
+          format: ({0[0]},{0[1]})
+      nu-bounds:
+        dtype: List[int]
+        info: "Frequency range to consider in index units. Default: 0 -1"
+        default : [0,-1]
+        required: false
+        policies:
+          repeat: '[]'
+      t-bounds:
+        dtype: List[int]
+        info: "Time range to consider in index units. Default: 0 -1"
+        default : [0,-1]
+        required: false
+        policies:
+          repeat: '[]'
+      n-threads:
+        dtype: int
+        info: "Number of threads to use for FFT operations. Default 32."
+        default: 32
+        required: false
+      stokes:
+        dtype: str
+        info: "Stokes parameter to consider. Provide string with any of I, Q, U, V. Eg: IV"
+        default: "IQUV"
+        required: false
+      std-scale:
+        dtype: float 
+        info: "Plot saturates at std_scale * std(data) in plots"
+        default: 2.0
+        required: false
+      debug:
+        dtype: bool
+        info: "Produce a plot of all terms for debugging purposes"
+        default: false
+      plot-for-paper:
+        dtype: bool
+        info: "Plot the data in a format suitable for publication"
+        default: false
+      dpi:
+        dtype: int
+        info: "DPI of the output plots. Default 300."
+        default: 300
+        required: false
+      calc-circular-pol:
+        dtype: bool
+        info: "Survey image to plot"
+        default: false
+      calc-linear-pol:
+        dtype: bool
+        info: "Calculate linear polarisation fraction sqrt((Q^2 + U^2) / I^2) after smoothing. Will also plot if --plot-smooth is set."
+        default: false
+      zero-sub-value-tolerance:
+        dtype: float
+        info: "Circular and linear polarization fractions require division by I. To avoid divide by zero issues, values within 0 ± tolerance are substituted for this tolerance value."
+        required: false
+        default: 1e-4
+      cmap:
+        dtype: str
+        info: "Colormap to use for plotting. Default is inferno."
+        required: false
+        default: "inferno"
+      verbose:
+        dtype: bool
+        info: "Enable verbose console output"
+        default: false
+
+    outputs:
+      {}
