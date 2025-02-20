@@ -2,8 +2,6 @@ name: Docker
 
 on:
   push:
-    types:
-      - closed  # Triggered by closing a PR (on merge or close; see below)
     branches:
       - master
     # Publish semver tags as releases.
