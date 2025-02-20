@@ -29,6 +29,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Install stimela
         # replace with normal install when 2.0.1 is out
@@ -39,7 +41,7 @@ jobs:
         run: pip install git+https://github.com/caracal-pipeline/cult-cargo.git
 
       - name: Install package
-        run: pip install -e inspect-dynspec
+        run: pip install -e .
 
       - name: Run build
-        run: build-cargo -m breifast-tron/breifast/cargo/cargo-manifest.yml -a
+        run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml -a
