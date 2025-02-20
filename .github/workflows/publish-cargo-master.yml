@@ -15,7 +15,7 @@ env:
 
 jobs:
   build:
-    if: github.event.pull_request.merged  # Only runs on merge.
+    if: github.event.push
     runs-on: ubuntu-latest
     permissions:
       contents: read
