@@ -1,0 +1,34 @@
+metadata:
+  # name of python package
+  PACKAGE: inspect_dynspec
+  # its repository -- leave unset to skip version checks
+  ## GITHUB_REPOSITORY: ratt-ru/breifast
+  # registry to use. Use module::filename.yml::variable format to pull from a config file inside a python module
+  REGISTRY: quay.io/talonmyburgh
+  # image bundle version. Use module::filename.yml::variable format to pull from a config file inside a python module
+  BUNDLE_VERSION: dspec0.0.1
+  # prefix to be removed from image version when comparing to python package version
+  BUNDLE_VERSION_PREFIX: dspec
+  # path to images. Use module::filename to refer to content of module
+  BASE_IMAGE_PATH: inspect_dynspec::images
+
+assign:
+  # standard variables used in templated Docker files
+  pre_install: ''
+  post_install: ''
+  extra_deps: ''
+
+  # base image for generic Python-based packages
+  base_python_image: quay.io/stimela2/python-astro:3.9-cc0.1.3
+  # corresponding python binary
+  python: python3.9
+
+  branch: ENV::GIT_BRANCH
+
+images:
+  dynspec:
+    versions:
+      '{branch}':
+        dockerfile: Dockerfile.branch
+
+

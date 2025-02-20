@@ -1,0 +1,4 @@
+include LICENSE
+include README.md
+recursive-include *.yml
+recursive-include Docker*
