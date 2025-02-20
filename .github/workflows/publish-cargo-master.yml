@@ -1,0 +1,48 @@
+name: Docker
+
+on:
+  pull_request:
+    types:
+      - closed  # Triggered by closing a PR (on merge or close; see below)
+    branches:
+      - master
+    # Publish semver tags as releases.
+    # tags: [ 'v*.*.*' ]
+
+env:
+  RATT_GITHUB_TOKEN: ${{ secrets.RATT_GITHUB_TOKEN }}
+  DOCKER_USER: ${{ secrets.DOCKER_USER }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  GIT_BRANCH: master  # NOTE: Presumes that the latest tag points at master.
+
+jobs:
+  build:
+    if: github.event.pull_request.merged  # Only runs on merge.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # This is used to complete the identity challenge
+      # with sigstore/fulcio when running outside of PRs.
+      id-token: write
+
+    steps:
+      - name: Docker login
+        run: docker login quay.io --username $DOCKER_USER --password $DOCKER_PASSWORD
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stimela
+        # replace with normal install when 2.0.1 is out
+        run: pip install git+https://github.com/caracal-pipeline/stimela.git
+
+      - name: Install cult-cargo
+        # replace with normal install when 0.1.3 is out
+        run: pip install git+https://github.com/caracal-pipeline/cult-cargo.git
+
+      - name: Install package
+        run: pip install -e inspect-dynspec
+
+      - name: Run build
+        run: build-cargo -m breifast-tron/breifast/cargo/cargo-manifest.yml -a
