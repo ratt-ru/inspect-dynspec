@@ -1,2 +1,2 @@
 # inspect-dynspec
-Dynamic spectra inspection tool
+Dynamic Spectra inspection tool
