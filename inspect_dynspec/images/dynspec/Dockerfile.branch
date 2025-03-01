@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Python 3.9.18 and other essential packages
 RUN apt-get update && apt-get install -y \
-    apt-get install -y casacore-data casacore-tools \
+    casacore-data casacore-tools \
     python3.9 \
     python3.9-venv \
     python3.9-dev \
