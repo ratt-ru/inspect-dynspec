@@ -12,9 +12,11 @@ RUN apt-get update && apt-get install -y \
 
 # Install Python 3.9.18 and other essential packages
 RUN apt-get update && apt-get install -y \
+    apt-get install -y casacore-data casacore-tools \
     python3.9 \
     python3.9-venv \
     python3.9-dev \
+    python3.9-distutils \
     cmake \
     gcc \
     g++ \
@@ -37,9 +39,6 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 
 RUN {python} -mpip install --no-cache-dir --upgrade pip wheel
 
 RUN {python} -mpip install setuptools==70.3.0
-# For some reason matplotlib complains of
-#   ImportError: cannot import name 'ft2font' from partially initialized module 'matplotlib' (most likely due to a circular import) 
-# but works if installed explicitly first
 
 # Install numpy and matplotlib
 RUN python3.9 -mpip install numpy==1.22.4 matplotlib==3.5.3
@@ -65,7 +64,7 @@ RUN {python} -mpip install --no-cache-dir "git+https://github.com/saopicc/killMS
 # Install DynSpecMS from the specified GitHub repository
 RUN {python} -mpip install --no-cache-dir "git+https://github.com/cyriltasse/DynSpecMS.git@SplitCatalog_fixes"
 
-# Install fatalii from the specified GitHub repository
+# Install inspect-dynspec from the specified GitHub repository
 RUN git clone https://github.com/ratt-ru/inspect-dynspec.git && \
     {python} -mpip install --no-cache-dir ./inspect-dynspec
 
