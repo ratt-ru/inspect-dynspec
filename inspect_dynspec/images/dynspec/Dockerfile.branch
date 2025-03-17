@@ -33,6 +33,11 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 
     && update-alternatives --set python3 /usr/bin/python3.9 \
     && update-alternatives --set python /usr/bin/python3
 
+RUN wget -nv -O /WSRT_Measures.ztar ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar \
+    && cd /var/lib/casacore/data \
+    && tar xfz /WSRT_Measures.ztar \
+    && rm /WSRT_Measures.ztar
+
 # {pre_install}
 
 RUN {python} -mpip install --no-cache-dir --upgrade pip wheel
@@ -40,7 +45,7 @@ RUN {python} -mpip install --no-cache-dir --upgrade pip wheel
 RUN {python} -mpip install setuptools==70.3.0
 
 # Install numpy and matplotlib
-RUN python3.9 -mpip install numpy==1.22.4 matplotlib==3.5.3 casadata
+RUN python3.9 -mpip install numpy==1.22.4 matplotlib==3.5.3
 
 RUN git clone https://github.com/talonmyburgh/DDFacet.git && \
     cd DDFacet && \
