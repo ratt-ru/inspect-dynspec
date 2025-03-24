@@ -109,14 +109,9 @@ def inspect_dynspec(
         )
 
     # Create output directory if it does not exist
-    output = os.path.join(os.path.abspath(input), os.path.abspath(output))
-    if not os.path.exists(output):
-        try:
-            os.makedirs(output)
-            LOGGER.info(f"Creating output directory {output}")
-        except:
-            LOGGER.error(f"Failed to create output directory {output}")
-            return
+    output_dir = os.path.abspath(os.path.join(os.path.abspath(input), output))
+    os.makedirs(output_dir, exist_ok=True)
+    LOGGER.info(f"Output directory: {output_dir}")
 
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
@@ -159,8 +154,9 @@ def inspect_dynspec(
 
         if debug:
             t_weight_plot_name = os.path.join(
-                output, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W.png"
+                output_dir, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W.png"
             )
+            LOGGER.info(f"Plotting target weights to {t_weight_plot_name}")
             t_weight_title = f"Target weights (W) for {name_str}\nat {coord_str}"
             vminmax = (
                 np.min(target_weights[target_weights != 0]),
@@ -180,7 +176,7 @@ def inspect_dynspec(
             )
             LOGGER.info(f"Wrote W weights plot to {t_weight_plot_name}")
             t2weight_plot_name = os.path.join(
-                output, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W2.png"
+                output_dir, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W2.png"
             )
             t2weight_title = f"Target weights (W2) for {name_str}\nat {coord_str}"
             vminmax = (
@@ -211,7 +207,7 @@ def inspect_dynspec(
         if debug:
             mask_title = f"Flagged regions for {name_str}\nat {coord_str}"
             mask_plot_name = os.path.join(
-                output,
+                output_dir,
                 f"{name_str.replace(' ', '_')}_{target_header['RA_RAD']}_{target_header['DEC_RAD']}_flagged_regions.png",
             )
             vminmax = (np.min(mask), np.max(mask))
@@ -239,7 +235,7 @@ def inspect_dynspec(
         LOGGER.info("Completed analytical denoising")
         if debug:
             var_a_plot_name = os.path.join(
-                output,
+                output_dir,
                 f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_var_a.png",
             )
             var_a_title = f"Analytical variance for {name_str}\nat {coord_str}"
@@ -279,7 +275,7 @@ def inspect_dynspec(
             for stx_idx, stx in enumerate(stokes_slice):
                 stx_str = "IQUV"[stx]
                 denoise_prog_name = os.path.join(
-                    output,
+                    output_dir,
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_denoise_progression.png",
                 )
                 denoise_title = f"{name_str} stokes {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
@@ -302,7 +298,7 @@ def inspect_dynspec(
                 )
 
                 var_e_plot_name = os.path.join(
-                    output,
+                    output_dir,
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_var_e.png",
                 )
                 var_e_title = (
@@ -440,7 +436,7 @@ def inspect_dynspec(
                     else f"Analytically and excess denoised, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                 )
                 sdata_plot_name = os.path.join(
-                    output,
+                    output_dir,
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_e_denoise.png",
                 )
                 vminmax = (
@@ -511,7 +507,7 @@ def inspect_dynspec(
                         else f"Analytically denoised target, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
                     )
                     data_a_plot_name = os.path.join(
-                        output,
+                        output_dir,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
                     )
                     vminmax = (
@@ -640,7 +636,6 @@ def plot_dynspec(
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(formatter)
         ax.set_title(title)
-        output = output.replace(":", "_").replace("-", "")
     plt.savefig(output, dpi=dpi)
     if return_plot:
         return ax
@@ -867,7 +862,6 @@ def plot_smoothed_data(
         ax.xaxis.set_major_formatter(formatter)
 
     plt.suptitle(title)
-    output = output.replace(":", "_").replace("-", "")
     plt.savefig(output, dpi=dpi, bbox_inches="tight", pad_inches=0)
     if return_plot:
         return ax
@@ -957,7 +951,6 @@ def plot_denoising_progression(
         formatter = mdates.ConciseDateFormatter(locator)
         ax[0].xaxis.set_major_locator(locator)
         ax[0].xaxis.set_major_formatter(formatter)
-        output = output.replace(":", "_").replace("-", "")
 
         im1 = ax[1].imshow(
             target_a_denoised,
@@ -982,7 +975,6 @@ def plot_denoising_progression(
         formatter = mdates.ConciseDateFormatter(locator)
         ax[1].xaxis.set_major_locator(locator)
         ax[1].xaxis.set_major_formatter(formatter)
-        output = output.replace(":", "_").replace("-", "")
 
         im2 = ax[2].imshow(
             target_a_e_denoised,
@@ -1007,7 +999,6 @@ def plot_denoising_progression(
         formatter = mdates.ConciseDateFormatter(locator)
         ax[2].xaxis.set_major_locator(locator)
         ax[2].xaxis.set_major_formatter(formatter)
-        output = output.replace(":", "_").replace("-", "")
 
     plt.suptitle(title)
 
