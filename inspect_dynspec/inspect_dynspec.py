@@ -23,16 +23,17 @@ from . import LOGGER, set_console_logging_level
 from art import text2art
 
 
-def parse_tuples(ctx, param, value: str) -> list:
-    # Parse each value (which is expected to be a string) into a tuple
-    parsed_tuples = []
-    for val in value:
-        # Assuming the input is in the format "(1,2)" without spaces
-        # Strip parentheses and split by comma
-        stripped_val = val[1:-1]  # Remove the parentheses
-        tuple_vals = tuple(map(int, stripped_val.split(",")))
-        parsed_tuples.append(tuple_vals)
-    return parsed_tuples
+def convert_tuple_to_list_of_lists(input_tuple):
+    """
+    Converts a tuple of strings representing lists into a list of lists.
+    Args:
+        input_tuple: Tuple of strings, e.g., ('[1,1]', '[2,2]')
+    Returns:
+        List of lists, e.g., [[1, 1], [2, 2]]
+    """
+    return [
+        list(map(float, re.findall(r"[-+]?\d*\.\d+|\d+", item))) for item in input_tuple
+    ]
 
 
 # Function to find a valid input directory containing TARGET and TARGET_W subdirectories
@@ -45,9 +46,6 @@ def find_valid_root(input: str) -> str:
         f"No directory containing {required_dirs} found under {input}"
     )
 
-def convert_to_list_of_tuples(input_tuple):
-    return [tuple(map(float, item.split(','))) for item in input_tuple]
-
 
 schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspec.yml"))
 
@@ -56,7 +54,7 @@ schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspe
 @click.command(help=schemas.cabs.get("inspect_dynspec").info)
 @clickify_parameters(schemas.cabs.get("inspect_dynspec"))
 def inspect_dynspec(
-    input: str,
+    root: str,
     output: str,
     kernel: list,
     nu_bounds: tuple,
@@ -79,25 +77,23 @@ def inspect_dynspec(
     print(script_name)
     print(description)
 
-    kernel = convert_to_list_of_tuples(kernel)
-
+    kernel = convert_tuple_to_list_of_lists(kernel)
     if plot_for_paper:
         figsize = (6, 3)
     else:
         figsize = (12, 6)
 
-    # Ensure the correct input directory is used
-    input = find_valid_root(input)
-    LOGGER.info(f"Found input for DynSpecMS products at {input}")
+    # Ensure the correct root directory is used
+    root = find_valid_root(root)
+    LOGGER.info(f"Found root for DynSpecMS products at {root}")
 
     if verbose:
         set_console_logging_level(logging.DEBUG)
         LOGGER.debug("Enabling extra verbose output")
 
-    # kernel = parse_tuples(None, None, kernel)
     cmap = check_colormap(cmap)
 
-    paths = get_files_paths(input)
+    paths = get_files_paths(root)
     nof_targets = len(paths["target"]["data"])
     nof_off_targets = len(paths["off_target"]["data"])
     LOGGER.info(
@@ -109,7 +105,7 @@ def inspect_dynspec(
         )
 
     # Create output directory if it does not exist
-    output_dir = os.path.abspath(os.path.join(os.path.abspath(input), output))
+    output_dir = os.path.abspath(os.path.join(os.path.abspath(root), output))
     os.makedirs(output_dir, exist_ok=True)
     LOGGER.info(f"Output directory: {output_dir}")
 
@@ -342,7 +338,9 @@ def inspect_dynspec(
                     target_data_var_normalised, circ_data_e_a_denoised, axis=0
                 )
                 # we must also extend wgt to account for the new stokes parameter (1's)
-                wgt = np.append(wgt, np.ones(wgt[0, :, :].shape)[np.newaxis, :, :], axis=0)
+                wgt = np.append(
+                    wgt, np.ones(wgt[0, :, :].shape)[np.newaxis, :, :], axis=0
+                )
 
         """
         ################### OPTIONALLY CALCULATING LINEAR POLARISATION ##########################
@@ -364,7 +362,9 @@ def inspect_dynspec(
                     target_data_var_normalised, linear_data_e_a_denoised, axis=0
                 )
                 # we must also extend wgt to account for the new stokes parameter (1's)
-                wgt = np.append(wgt, np.ones(wgt[0, :, :].shape)[np.newaxis, :, :], axis=0)
+                wgt = np.append(
+                    wgt, np.ones(wgt[0, :, :].shape)[np.newaxis, :, :], axis=0
+                )
 
         stokes_slice = np.unique(stokes_slice)
 
