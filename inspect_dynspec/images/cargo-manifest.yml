@@ -27,6 +27,8 @@ assign:
 
 images:
   dynspec:
+    assign:
+      CMD: inspect-dynspec
     versions:
       '{branch}':
         dockerfile: Dockerfile.branch
