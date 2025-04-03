@@ -64,7 +64,7 @@ RUN {python} -mpip install --no-cache-dir "git+https://github.com/caracal-pipeli
 RUN {python} -mpip install --no-cache-dir "meqtrees-cattery"
 
 # Install killMS from the specified GitHub repository
-RUN {python} -mpip install --no-cache-dir "git+https://github.com/saopicc/killMS.git@17b53f2e7db273d08f825af4e6645fcee94f8a18"
+RUN {python} -mpip install --no-cache-dir "git+https://github.com/JSKenyon/killMS"
 
 # Install DynSpecMS from the specified GitHub repository
 RUN {python} -mpip install --no-cache-dir "git+https://github.com/cyriltasse/DynSpecMS.git@SplitCatalog_fixes"
