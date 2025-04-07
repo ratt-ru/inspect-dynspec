@@ -1,0 +1,11 @@
+FROM {base_python_image}
+
+RUN python -mpip install --no-cache-dir --upgrade pip wheel
+
+RUN python -mpip install --no-cache-dir "git+https://github.com/caracal-pipeline/cult-cargo"
+
+RUN python -mpip install --no-cache-dir "git+https://github.com/caracal-pipeline/stimela"
+
+RUN python -mpip install --no-cache-dir "git+https://github.com/ratt-ru/inspect-dynspec"
+
+CMD {CMD}
