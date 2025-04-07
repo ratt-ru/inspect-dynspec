@@ -473,7 +473,7 @@ def inspect_dynspec(
                         else f"raw target, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
                     )
                     data_raw_plot_name = os.path.join(
-                        output,
+                        output_dir,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
                     )
                     vminmax = (

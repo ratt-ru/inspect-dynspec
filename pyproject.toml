@@ -17,7 +17,7 @@ dask = "*"
 art = "*"
 numpy = "*"
 click = "*"
-matplotlib = "*"
+matplotlib = "^3.9.4"
 
 [tool.poetry.scripts]
 inspect-dynspec = "inspect_dynspec.inspect_dynspec:inspect_dynspec"
