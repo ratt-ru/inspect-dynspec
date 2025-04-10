@@ -29,7 +29,8 @@ images:
       CMD: ms2dynspec --help
       default_python_version: '3.9'
     versions:
-      package: dynspecms==1.0.0
+      '1.0.0':
+        package: dynspecms==1.0.0
       '{branch}':
         dockerfile: Dockerfile.branch
   inspectdynspec:
@@ -37,7 +38,8 @@ images:
       CMD: inspect-dynspec --help
       default_python_version: '3.10'
     versions:
-      package: inspect-dynspec==0.0.1
+      '0.0.1':
+        package: inspect-dynspec==0.0.1
       '{branch}':
         dockerfile: Dockerfile.branch
 
