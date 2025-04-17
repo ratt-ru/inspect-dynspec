@@ -41,8 +41,8 @@ jobs:
         run: pip install -e .
 
       - name: Always run inspectdynspec build
-        run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml inspectdynspec -a
+        run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml inspectdynspec
 
       - name: Conditionally run ms2dynspec build
         if: ${{ github.event.head_commit.modified && contains(github.event.head_commit.modified, 'inspect_dynspec/images/ms2dynspec/Dockerfile.branch') }}
-        run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml ms2dynspec -a
+        run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml ms2dynspec
