@@ -39,8 +39,6 @@ RUN mkdir -p /faux_home/measures && \
 
 ENV CASARCFILES=/faux_home/.casarc
 
-# {pre_install}
-
 RUN python -mpip install --no-cache-dir --upgrade pip wheel
 
 RUN python -mpip install setuptools==70.3.0
@@ -82,7 +80,5 @@ RUN python -c "from astropy.coordinates import EarthLocation; EarthLocation.of_s
 
 # this now disables astropy downloads so should be done last 
 COPY astropy.cfg  /var/config/astropy
-
-# {post_install}
 
 CMD {CMD}
