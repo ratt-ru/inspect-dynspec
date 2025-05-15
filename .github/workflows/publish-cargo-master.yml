@@ -28,10 +28,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 50  # Ensure full commit history is available
-
-      - name: Fetch full history
-        run: git fetch --unshallow  # Ensure all commits are accessible
+          fetch-depth: 0  # Fetch full history
 
       - name: Debug - List modified files
         run: git diff --name-only HEAD~1 HEAD  # Compare last two commits
