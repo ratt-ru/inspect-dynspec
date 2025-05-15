@@ -5,7 +5,6 @@ on:
     branches:
       - master
     paths:
-      - inspect_dynspec/images/ms2dynspec/Dockerfile.branch  # Trigger when this file changes
       - '**'  # Trigger for all other changes
 
 env:
@@ -39,6 +38,9 @@ jobs:
 
       - name: Install package
         run: pip install -e .
+
+      - name: Debug modified files
+        run: echo ${{ toJSON(github.event.head_commit.modified) }}
 
       - name: Always run inspectdynspec build
         run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml inspectdynspec
