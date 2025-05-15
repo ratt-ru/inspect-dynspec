@@ -5,7 +5,7 @@ on:
     branches:
       - master
     paths:
-      - '**'  # Trigger for all other changes
+      - '**'  # Trigger for all changes
 
 env:
   RATT_GITHUB_TOKEN: ${{ secrets.RATT_GITHUB_TOKEN }}
@@ -30,21 +30,23 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install stimela
-        run: pip install git+https://github.com/caracal-pipeline/stimela.git
+      - name: Install dependencies
+        run: |
+          pip install git+https://github.com/caracal-pipeline/stimela.git
+          pip install git+https://github.com/caracal-pipeline/cult-cargo.git
+          pip install -e .
 
-      - name: Install cult-cargo
-        run: pip install git+https://github.com/caracal-pipeline/cult-cargo.git
-
-      - name: Install package
-        run: pip install -e .
-
-      - name: Debug modified files
-        run: echo ${{ toJSON(github.event.head_commit.modified) }}
+      - name: Debug - List modified files
+        run: git diff --name-only ${{ github.event.before }} ${{ github.event.after }}
 
       - name: Always run inspectdynspec build
         run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml inspectdynspec
 
       - name: Conditionally run ms2dynspec build
-        if: ${{ github.event.head_commit.modified && contains(github.event.head_commit.modified, 'inspect_dynspec/images/ms2dynspec/Dockerfile.branch') }}
-        run: build-cargo -m inspect_dynspec/images/cargo-manifest.yml ms2dynspec
+        run: |
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
+          if echo "$CHANGED_FILES" | grep -q "inspect_dynspec/images/ms2dynspec/Dockerfile.branch"; then
+            build-cargo -m inspect_dynspec/images/cargo-manifest.yml ms2dynspec
+          else
+            echo "No relevant changes detected, skipping ms2dynspec build."
+          fi

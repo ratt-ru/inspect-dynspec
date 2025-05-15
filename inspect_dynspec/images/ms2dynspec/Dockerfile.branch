@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     && add-apt-repository ppa:deadsnakes/ppa
 
-# Install Python 3.9.18 and other essential packages
+# Install Python 3.9 and other essential packages
 RUN apt-get update && apt-get install -y \
     python3.9 \
     python3.9-venv \
@@ -22,7 +22,6 @@ RUN apt-get update && apt-get install -y \
     libfftw3-dev \
     && apt-get clean
 
-# Install pip for Python 3.9.18
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python3.9 get-pip.py && \
     rm get-pip.py
