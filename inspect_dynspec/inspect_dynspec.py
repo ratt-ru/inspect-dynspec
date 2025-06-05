@@ -394,6 +394,10 @@ def inspect_dynspec(
             smoothed_target_data_var_normalised = (
                 conv_target_data_var_normalised / cwgt_nonzero
             )
+            sstd = (1 / np.sqrt(cwgt_nonzero)) * mask
+            sSNR = smoothed_target_data_var_normalised * np.sqrt(
+                cwgt
+            )  # i.e sSNR = sdata / sstd = sdata * sqrt(wgt)
 
             if debug:
                 # smooth target data
@@ -535,6 +539,39 @@ def inspect_dynspec(
                     )
                     LOGGER.info(
                         f"Wrote target smoothed plot for stokes {stx_str} to {data_a_plot_name}"
+                    )
+                    sSNR_title = (
+                        ""
+                        if plot_for_paper
+                        else f"sSNR, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                    )
+                    sSNR_plot_name = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
+                    )
+                    vminmax = (
+                        -std_scale * np.std(sSNR[stx_idx, :, :]),
+                        std_scale * np.std(sSNR[stx_idx, :, :]),
+                    )
+                    plot_smoothed_data(
+                        sSNR[stx_idx, :, :],
+                        nu_slice,
+                        t_slice,
+                        nu_delta,
+                        t_delta,
+                        output=sSNR_plot_name,
+                        header=target_header,
+                        vminmax=vminmax,
+                        vcenter=0,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=sSNR_title,
+                        cbar_label="SNR",
+                        figsize=figsize,
+                        return_plot=False,
+                    )
+                    LOGGER.info(
+                        f"Wrote sSNR smoothed plot for stokes {stx_str} to {sSNR_plot_name}"
                     )
 
 
