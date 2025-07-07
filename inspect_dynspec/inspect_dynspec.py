@@ -21,6 +21,9 @@ import glob
 from omegaconf import OmegaConf
 from . import LOGGER, set_console_logging_level
 from art import text2art
+import jax
+import jax.numpy as jnp
+from jax.scipy.linalg import cho_solve
 
 
 def convert_tuple_to_list_of_lists(input_tuple):
@@ -1091,6 +1094,77 @@ def make_kernel(x, l):
     nx = x.size
     return np.exp(-((x - x[nx // 2]) ** 2) / (2 * l_sigma**2))
 
+def rbf_kernel(X1, X2, sigma2=1.0, l_length=1.0):
+    # pairwise squared distances
+    sqdist = jnp.sum((X1[:, None, :] - X2[None, :, :])**2, axis=-1)
+    # σ² * exp(−½⋅d²/ℓ²)
+    return sigma2 * jnp.exp(-0.5 * sqdist / l_length**2)
+
+
+def gpr_smooth(
+    data: np.ndarray,
+    weights: np.ndarray,
+    l_length: float = 1.0,
+    sigma_2: float = 1.0) -> np.ndarray:
+    """
+    2D Gaussian‐Process smoothing via an RBF kernel.
+    
+    Args:
+      data     : float[H, W]  — observed brightness.
+      weights  : float[H, W]  — per-pixel noise variances.
+      l_length : float        — RBF length-scale ℓ.
+      sigma2   : float        — RBF signal variance σ².
+    
+    Returns:
+      float[H, W] — posterior mean (“smoothed”) image.
+    """
+
+    H, W = data.shape
+    N    = H * W
+
+    # 1a. Build a (H, W, 2) grid of (row, col) pairs
+    coords = jnp.stack(
+        jnp.meshgrid(jnp.arange(H),
+                     jnp.arange(W),
+                     indexing='ij'),
+        axis=-1
+    )                         # shape = (H, W, 2)
+
+    # 2. Flatten to (N, 2) for X and (N,) for y, noise_var
+    X         = coords.reshape(-1, 2)    # Nx2 input locations
+    y         = data.reshape(-1)         # Nx1 observations
+    noise_var = weights.reshape(-1)      # Nx1 variances
+
+    # 3. Evaluate kernel on all pairs (K_prior)
+    K_prior = rbf_kernel(X, X)   # shape = (N, N)
+
+    # 4. Add sigma_2 on the diagonal for noise + numerical stability (regularised covariance)
+    K_reg = K_prior + jnp.diag(noise_var)  # NxN
+
+    # 5. Cholesky factorization: K_reg = L L_transpose
+    # This is a lower triangular matrix L such that K_reg = L @ L.T
+    L = jnp.linalg.cholesky(K_reg)
+
+    # Get the posterior covariance matrix:
+    # A. Solve once for V = (K_reg)_inv K_prior has shape (N, N)
+    V = cho_solve((L, True), K_prior)
+
+    # B. Compute the posterior covariance matrix Sigma (NxN)
+    Sigma = K_prior - K_prior @ V
+
+    # C. Extract pixel variances (diagonal)
+    var_post = jnp.diag(Sigma)        # shape (N,)
+    var_image = var_post.reshape(H, W)
+
+    # 5b. Solve for alpha = (K_reg)_inv y
+    alpha = cho_solve((L, True), y)
+
+    # 5c. Posterior mean at original X: μ = K_prior @ α
+    mu = K_prior @ alpha           # shape = (N,) - this does a multiplication of matrices
+
+    mu_image = mu.reshape(H, W)     # Reshape to original image shape
+    var_image = var_post.reshape(H, W)
+    return mu_image, var_image
 
 def convolve(
     data: np.ndarray,
