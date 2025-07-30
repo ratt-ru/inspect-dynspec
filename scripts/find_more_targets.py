@@ -351,9 +351,9 @@ if __name__ == "__main__":
     if args.ecsv is None or not os.path.exists(args.ecsv):
         # Set a filename for the new ecsv file, using identifier if provided
         if args.identifier:
-            args.ecsv = f"{args.identifier}_targets.ecsv"
+            args.ecsv = f"{args.identifier}_targets_unified.ecsv"
         else:
-            args.ecsv = "targets.ecsv"
+            args.ecsv = "targets_unified.ecsv"
 
     find_more_targets(
         args.ecsv,
