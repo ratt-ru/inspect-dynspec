@@ -210,9 +210,8 @@ def find_more_targets(
         )
     else:
         target_df = eu_exoplanet.copy()
-    if gaia_source is None:
-        print("No Gaia source found within the specified radius.")
-    else:
+    # Always try to append Gaia source if found and within distance
+    if gaia_source is not None:
         gaia_dr3_id = gaia_source["source_id"]
         parallax = gaia_source["parallax"]
         try:
@@ -220,15 +219,11 @@ def find_more_targets(
         except Exception:
             star_distance = np.nan
 
-        if star_distance > distance:
-            print(
-                f"Gaia source found, but its distance ({star_distance:.2f} pc) exceeds the specified limit ({distance} pc). Not appending."
-            )
-        else:
+        if np.isnan(star_distance) or star_distance <= distance:
             ra = gaia_source["ra"]
             dec = gaia_source["dec"]
             sol_id = gaia_source["solution_id"]
-            # Check for close EU catalog entries and replace them
+            # Remove close EU catalog entries
             close_mask = (abs(target_df["ra"] - ra) < tolerance) & (
                 abs(target_df["dec"] - dec) < tolerance
             )
@@ -248,6 +243,12 @@ def find_more_targets(
                 target_df = pd.concat(
                     [target_df, pd.DataFrame([new_row])], ignore_index=True
                 )
+        else:
+            print(
+                f"Gaia source found, but its distance ({star_distance:.2f} pc) exceeds the specified limit ({distance} pc). Not appending."
+            )
+    else:
+        print("No Gaia source found within the specified radius.")
 
     # Prepare new candidates in the expected ECSV format
     new_rows = []
