@@ -5,11 +5,12 @@ from astropy import units as u
 from astroquery.simbad import Simbad
 import pandas as pd
 import numpy as np
+import os
 
 
 def read_existing_ecsv(ecsv_path):
     try:
-        df = pd.read_csv(ecsv_path, delim_whitespace=True, comment="#")
+        df = pd.read_csv(ecsv_path, sep=r"\s+", comment="#")
         expected_cols = [
             "id",
             "did",
@@ -58,11 +59,9 @@ def query_Gaia_ID(sky_coordinates, radius=0.001, id_version="dr3") -> str:
         return None
     else:
         if id_version == "dr3":
-            Gaia.MAIN_GAIA_TABLE = (
-                "gaiadr3.gaia_source"  
-            )
+            Gaia.MAIN_GAIA_TABLE = "gaiadr3.gaia_source"
         else:
-            Gaia.MAIN_GAIA_TABLE = "gaiadr2.gaia_source" 
+            Gaia.MAIN_GAIA_TABLE = "gaiadr2.gaia_source"
 
         gaia_job = Gaia.cone_search_async(
             sky_coordinates, radius=u.Quantity(radius, u.deg)
@@ -70,7 +69,7 @@ def query_Gaia_ID(sky_coordinates, radius=0.001, id_version="dr3") -> str:
         gaia_data = gaia_job.get_results()
         if len(gaia_data) > 0:
             # returns smallest distance from source first - which is appropriate for us
-            return gaia_data[0]
+            return gaia_data
         else:
             return None
 
@@ -176,14 +175,15 @@ def find_more_targets(
 
     # Query Gaia for the closest source
     try:
-        gaia_source = query_Gaia_ID(sky_coordinates, radius=radius)
-        print(
-            f"Found {len(gaia_source)} targets in the gaia catalog within the specified radius."
-        )
-
+        gaia_sources = query_Gaia_ID(sky_coordinates, radius=radius)
+        if gaia_sources is not None:
+            print(f"Found {len(gaia_sources)} targets in the gaia catalog within the specified radius.")
+        else:
+            print("No Gaia sources found within the specified radius.")
     except Exception as e:
         print(f"An error occurred while querying Gaia: {e}")
 
+    # Simulate no EU exoplanet targets found by setting eu_exoplanet to an empty DataFrame
     try:
         eu_exoplanet = find_targets_in_csv_catalog(
             "/home/myburgh/exoplanet_eu_catalog_dr3.csv",
@@ -195,62 +195,97 @@ def find_more_targets(
         print(
             f"Found {len(eu_exoplanet)} targets in the eu exoplanet catalog within the specified radius."
         )
-
     except Exception as e:
         print(f"An error occurred while querying the exoplanet catalog: {e}")
 
-    if len(eu_exoplanet) == 0:
-        target_df = pd.DataFrame(
-            columns=["star_name", "ra", "dec", "gaia_dr3", "star_distance"]
-        )
+    if os.path.exists(ecsv):
+        orig_df = read_existing_ecsv(ecsv)
+        orig_targets = pd.DataFrame({
+            "star_name": orig_df["id"],
+            "ra": orig_df["pos.ra"],
+            "dec": orig_df["pos.dec"],
+            "gaia_dr3": orig_df["id"].apply(lambda x: x.split(":")[-1] if ":" in str(x) else str(x)),
+            "star_distance": np.nan,
+        })
     else:
-        target_df = eu_exoplanet.copy()
-    # Always try to append Gaia source if found and within distance
-    if gaia_source is not None:
-        gaia_dr3_id = gaia_source["source_id"]
-        parallax = gaia_source["parallax"]
-        try:
-            star_distance = parallax.to(u.pc).value
-        except Exception:
-            star_distance = np.nan
+        orig_targets = pd.DataFrame(columns=["star_name", "ra", "dec", "gaia_dr3", "star_distance"])
 
-        if not np.isnan(star_distance) and star_distance <= distance:
-            ra = gaia_source["ra"]
-            dec = gaia_source["dec"]
-            sol_id = gaia_source["solution_id"]
-            # Remove close EU catalog entries
-            close_mask = (abs(target_df["ra"] - ra) < tolerance) & (
-                abs(target_df["dec"] - dec) < tolerance
-            )
-            if close_mask.any():
+    if len(eu_exoplanet) == 0:
+        target_df = orig_targets.copy()
+    else:
+        target_df = pd.concat([orig_targets, eu_exoplanet.copy()], ignore_index=True)
+
+    if gaia_sources is not None:
+        for gaia_source in gaia_sources:
+            gaia_dr3_id = gaia_source["source_id"]
+            try:
+                parallax = gaia_source["parallax"]
+            except Exception:
+                parallax = np.nan
+            try:
+                star_distance = 1000.0 / parallax if parallax > 0 else np.nan
+            except Exception:
+                star_distance = np.nan
+
+            if not np.isnan(star_distance) and star_distance <= distance:
                 print(
-                    f"Replacing EU catalog entry with Gaia entry due to close RA/Dec match (tolerance={tolerance})."
+                        f"Gaia source {gaia_source['source_id']} found, at distance ({star_distance:.2f} pc). Appending."
+                    )
+                try:
+                    ra_val = gaia_source["ra"]
+                    dec_val = gaia_source["dec"]
+                except Exception:
+                    ra_val = np.nan
+                    dec_val = np.nan
+                sol_id = gaia_source["solution_id"]
+
+                # Replace close EU catalog sources with Gaia ones
+                close_mask = (abs(target_df["ra"] - ra_val) < tolerance) & (
+                    abs(target_df["dec"] - dec_val) < tolerance
                 )
-                target_df = target_df[~close_mask]
-            if gaia_dr3_id not in target_df["gaia_dr3"].values:
-                new_row = {
-                    "star_name": sol_id,
-                    "ra": ra,
-                    "dec": dec,
-                    "gaia_dr3": gaia_dr3_id,
-                    "star_distance": star_distance,
-                }
-                target_df = pd.concat(
-                    [target_df, pd.DataFrame([new_row])], ignore_index=True
-                )
-        else:
-            print(
-                f"Gaia source found, but its distance ({star_distance:.2f} pc) exceeds the specified limit ({distance} pc). Not appending."
-            )
+                if close_mask.any():
+                    for idx in target_df[close_mask].index:
+                        eu_row = target_df.loc[idx]
+                        print(
+                            f"Replacing EU catalog entry (id={eu_row.get('star_name', 'N/A')}, ra={eu_row['ra']}, dec={eu_row['dec']}) "
+                            f"with Gaia entry (id={sol_id}, gaia_dr3={gaia_dr3_id}, ra={ra_val}, dec={dec_val}) "
+                            f"due to close RA/Dec match (tolerance={tolerance})."
+                        )
+                    target_df = target_df[~close_mask]
+                if gaia_dr3_id not in target_df["gaia_dr3"].values:
+                    new_row = {
+                        "star_name": sol_id,
+                        "ra": ra_val,
+                        "dec": dec_val,
+                        "gaia_dr3": gaia_dr3_id,
+                        "star_distance": star_distance,
+                    }
+                    new_row_df = pd.DataFrame([new_row])
+                    if target_df.empty:
+                        target_df = new_row_df
+                    else:
+                        target_df = pd.concat([target_df, new_row_df], ignore_index=True)
+            else:
+                if not np.isnan(star_distance):
+                    print(
+                        f"Gaia source {gaia_source['source_id']} found, but its distance ({star_distance:.2f} pc) exceeds the specified limit ({distance} pc). Not appending."
+                    )
     else:
         print("No Gaia source found within the specified radius.")
 
-    # Prepare new candidates in the expected ECSV format
     new_rows = []
-    for _, row in target_df.iterrows():
+    orig_ids = set(orig_df["id"]) if os.path.exists(ecsv) else set()
+    for idx, row in target_df.iterrows():
+        if (
+            row["star_name"] in orig_ids
+            or ("id" in row and row["star_name"] == row["id"])
+        ):
+            id_val = row["star_name"]
+        else:
+            id_val = f"{row['star_name']}:{row['gaia_dr3']}"
         new_rows.append(
             {
-                "id": f"{row['star_name']}:{row['gaia_dr3']}",
+                "id": id_val,
                 "did": "0",
                 "cid": "0",
                 "pid": "0",
@@ -262,11 +297,8 @@ def find_more_targets(
             }
         )
 
-    import os
-
     if os.path.exists(ecsv):
         existing_df = read_existing_ecsv(ecsv)
-        # Use identifier to create a new output filename in the same directory as the ingested ecsv
         ecsv_dir = os.path.dirname(os.path.abspath(ecsv))
         if identifier:
             output_ecsv = os.path.join(ecsv_dir, f"{identifier}_targets.ecsv")
@@ -276,13 +308,11 @@ def find_more_targets(
         existing_df = pd.DataFrame(
             columns=["id", "did", "cid", "pid", "x", "y", "pos.ra", "pos.dec", "stokes"]
         )
-        # Write locally if no ecsv is supplied
         if identifier:
             output_ecsv = f"{identifier}_targets.ecsv"
         else:
             output_ecsv = "targets.ecsv"
 
-    # Append new candidates and drop duplicates by 'id'
     final_df = pd.concat([existing_df, pd.DataFrame(new_rows)], ignore_index=True)
     final_df = final_df.drop_duplicates(subset=["id"])
 
