@@ -183,7 +183,6 @@ def find_more_targets(
     except Exception as e:
         print(f"An error occurred while querying Gaia: {e}")
 
-    # Simulate no EU exoplanet targets found by setting eu_exoplanet to an empty DataFrame
     try:
         eu_exoplanet = find_targets_in_csv_catalog(
             "/home/myburgh/exoplanet_eu_catalog_dr3.csv",
