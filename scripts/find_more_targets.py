@@ -203,7 +203,15 @@ def find_more_targets(
             "star_distance": np.nan,
         })
     else:
-        orig_targets = pd.DataFrame(columns=["star_name", "ra", "dec", "gaia_dr3", "star_distance"])
+        orig_targets = pd.DataFrame(
+            {
+                "star_name": pd.Series(dtype="str"),
+                "ra": pd.Series(dtype="float"),
+                "dec": pd.Series(dtype="float"),
+                "gaia_dr3": pd.Series(dtype="str"),
+                "star_distance": pd.Series(dtype="float"),
+            }
+        )
 
     if len(eu_exoplanet) == 0:
         target_df = orig_targets.copy()
@@ -248,14 +256,16 @@ def find_more_targets(
                         )
                     target_df = target_df[~close_mask]
                 if gaia_dr3_id not in target_df["gaia_dr3"].values:
-                    new_row = {
-                        "star_name": sol_id,
-                        "ra": ra_val,
-                        "dec": dec_val,
-                        "gaia_dr3": gaia_dr3_id,
-                        "star_distance": star_distance,
-                    }
-                    new_row_df = pd.DataFrame([new_row])
+                    new_row_df = pd.DataFrame(
+                        [[str(sol_id), ra_val, dec_val, str(gaia_dr3_id), star_distance]],
+                        columns=["star_name", "ra", "dec", "gaia_dr3", "star_distance"],
+                    ).astype({
+                        "star_name": "str",
+                        "ra": "float",
+                        "dec": "float",
+                        "gaia_dr3": "str",
+                        "star_distance": "float",
+                    })
                     if target_df.empty:
                         target_df = new_row_df
                     else:
@@ -277,7 +287,8 @@ def find_more_targets(
         ):
             id_val = row["star_name"]
         else:
-            id_val = f"{row['star_name']}:{row['gaia_dr3']}"
+            id_val = f"{str(row['star_name'])}:{str(row['gaia_dr3'])}"
+        print(id_val)
         new_rows.append(
             {
                 "id": id_val,
@@ -292,23 +303,27 @@ def find_more_targets(
             }
         )
 
-    if os.path.exists(ecsv):
+    if ecsv and os.path.exists(ecsv):
         existing_df = read_existing_ecsv(ecsv)
         ecsv_dir = os.path.dirname(os.path.abspath(ecsv))
         if identifier:
-            output_ecsv = os.path.join(ecsv_dir, f"{identifier}_targets.ecsv")
+            output_ecsv = os.path.join(ecsv_dir, f"{identifier}_targets_unified.ecsv")
         else:
-            output_ecsv = os.path.join(ecsv_dir, "targets_appended.ecsv")
+            output_ecsv = os.path.join(ecsv_dir, "targets_appended_unified.ecsv")
     else:
         existing_df = pd.DataFrame(
             columns=["id", "did", "cid", "pid", "x", "y", "pos.ra", "pos.dec", "stokes"]
         )
         if identifier:
-            output_ecsv = f"{identifier}_targets.ecsv"
+            output_ecsv = f"{identifier}_targets_unified.ecsv"
         else:
-            output_ecsv = "targets.ecsv"
+            output_ecsv = "targets_unified.ecsv"
 
-    final_df = pd.concat([existing_df, pd.DataFrame(new_rows)], ignore_index=True)
+    final_new_df = pd.DataFrame(new_rows)
+    if not existing_df.empty:
+        final_df = pd.concat([existing_df, final_new_df], ignore_index=True)
+    else:
+        final_df = final_new_df
     final_df = final_df.drop_duplicates(subset=["id"])
 
     # Write out the final ECSV
@@ -327,7 +342,7 @@ if __name__ == "__main__":
     args.add_argument(
         "--ecsv",
         type=str,
-        default=None,
+        default="",
         required=False,
         help="Path to the ecsv file to append targets to. If not provided, a new ecsv file will be created.",
     )
@@ -368,13 +383,6 @@ if __name__ == "__main__":
         help="Tolerance for RA/Dec matching when replacing EU catalog entries with Gaia entries (default: 1e-3 degrees)",
     )
     args = args.parse_args()
-
-    if args.ecsv is None or not os.path.exists(args.ecsv):
-        # Set a filename for the new ecsv file, using identifier if provided
-        if args.identifier:
-            args.ecsv = f"{args.identifier}_targets_unified.ecsv"
-        else:
-            args.ecsv = "targets_unified.ecsv"
 
     find_more_targets(
         args.ecsv,
