@@ -8,10 +8,8 @@ import numpy as np
 
 
 def read_existing_ecsv(ecsv_path):
-    # Try to read the ECSV file as a whitespace-delimited table
     try:
         df = pd.read_csv(ecsv_path, delim_whitespace=True, comment="#")
-        # Ensure expected columns exist
         expected_cols = [
             "id",
             "did",
@@ -35,7 +33,6 @@ def read_existing_ecsv(ecsv_path):
 
 
 def write_final_ecsv(df, ecsv_path):
-    # Write as whitespace-delimited text, matching your ingestion format
     header = "id did cid pid x y pos.ra pos.dec stokes"
     with open(ecsv_path, "w") as f:
         f.write(header + "\n")
@@ -62,10 +59,10 @@ def query_Gaia_ID(sky_coordinates, radius=0.001, id_version="dr3") -> str:
     else:
         if id_version == "dr3":
             Gaia.MAIN_GAIA_TABLE = (
-                "gaiadr3.gaia_source"  # Reselect Data Release 3, default
+                "gaiadr3.gaia_source"  
             )
         else:
-            Gaia.MAIN_GAIA_TABLE = "gaiadr2.gaia_source"  # Select Data Release 2
+            Gaia.MAIN_GAIA_TABLE = "gaiadr2.gaia_source" 
 
         gaia_job = Gaia.cone_search_async(
             sky_coordinates, radius=u.Quantity(radius, u.deg)
@@ -126,7 +123,7 @@ def find_targets_in_csv_catalog(catalog_path, ra, dec, radius_deg, max_distance=
     # Load catalog
     df = pd.read_csv(catalog_path)
 
-    # Drop rows with missing coordinates
+    # Drop rows without coords
     df = df.dropna(subset=["ra", "dec", "star_name", "gaia_dr3", "star_distance"])
 
     # Create SkyCoord objects for catalog and input
@@ -142,11 +139,9 @@ def find_targets_in_csv_catalog(catalog_path, ra, dec, radius_deg, max_distance=
     mask = sep <= radius_deg
     filtered = df[mask]
 
-    # Optionally filter by max_distance
     if max_distance is not None:
         filtered = filtered[filtered["star_distance"] <= max_distance]
 
-    # Select columns
     result = filtered[
         ["star_name", "ra", "dec", "gaia_dr3", "star_distance"]
     ].reset_index(drop=True)
@@ -219,7 +214,7 @@ def find_more_targets(
         except Exception:
             star_distance = np.nan
 
-        if np.isnan(star_distance) or star_distance <= distance:
+        if not np.isnan(star_distance) and star_distance <= distance:
             ra = gaia_source["ra"]
             dec = gaia_source["dec"]
             sol_id = gaia_source["solution_id"]
