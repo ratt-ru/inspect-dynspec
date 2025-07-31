@@ -176,10 +176,6 @@ def find_more_targets(
     # Query Gaia for the closest source
     try:
         gaia_sources = query_Gaia_ID(sky_coordinates, radius=radius)
-        if gaia_sources is not None:
-            print(f"Found {len(gaia_sources)} targets in the gaia catalog within the specified radius.")
-        else:
-            print("No Gaia sources found within the specified radius.")
     except Exception as e:
         print(f"An error occurred while querying Gaia: {e}")
 
