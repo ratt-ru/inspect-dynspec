@@ -288,7 +288,7 @@ def find_more_targets(
             id_val = row["star_name"]
         else:
             id_val = f"{str(row['star_name'])}:{str(row['gaia_dr3'])}"
-        print(id_val)
+        id_val = str(id_val).replace(" ", "_")
         new_rows.append(
             {
                 "id": id_val,
