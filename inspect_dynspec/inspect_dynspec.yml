@@ -78,9 +78,9 @@ cabs:
         default: 1e-4
       cmap:
         dtype: str
-        info: "Colormap to use for plotting. Default is inferno."
+        info: "Colormap to use for plotting. Default is RdYlBu_r."
         required: false
-        default: "inferno"
+        default: "RdYlBu_r"
       verbose:
         dtype: bool
         info: "Enable verbose console output"

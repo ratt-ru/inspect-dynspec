@@ -135,6 +135,9 @@ def inspect_dynspec(
                 index=target,
             ).compute()
         )
+        
+        mask = get_mask(target_data, blow_up_scale=1e4)
+        nanmask = np.where(mask==0,np.nan,1)
 
         LOGGER.info(
             f"""
@@ -159,7 +162,7 @@ def inspect_dynspec(
                 np.max(target_weights),
             )
             plot_dynspec(
-                target_weights,
+                target_weights * nanmask,
                 t_weight_plot_name,
                 target_header,
                 nu_slice,
@@ -180,7 +183,7 @@ def inspect_dynspec(
                 np.max(target_weights2),
             )
             plot_dynspec(
-                target_weights2,
+                target_weights2 * nanmask,
                 t2weight_plot_name,
                 target_header,
                 nu_slice,
@@ -194,21 +197,16 @@ def inspect_dynspec(
             LOGGER.info(f"Wrote W2 weights plot to {t2weight_plot_name}")
 
         # As we have sliced the data already, all matrices from here on will be sliced to shape.
-        """
-        ################# DETERMINE DATA REGIONS ################################
-        """
-        mask = get_mask(target_data, blow_up_scale=1e4)
-        # target_data = np.ones(target_data.shape) * 1e-3
-        # target_data *= mask  # Jy
+
         if debug:
             mask_title = f"Flagged regions for {name_str}\nat {coord_str}"
             mask_plot_name = os.path.join(
                 output_dir,
                 f"{name_str.replace(' ', '_')}_{target_header['RA_RAD']}_{target_header['DEC_RAD']}_flagged_regions.png",
             )
-            vminmax = (np.min(mask), np.max(mask))
+            vminmax = (0, 1)
             plot_dynspec(
-                data=mask,
+                data=nanmask,
                 output=mask_plot_name,
                 header=target_header,
                 nu_slice=nu_slice,
@@ -237,7 +235,7 @@ def inspect_dynspec(
             var_a_title = f"Analytical variance for {name_str}\nat {coord_str}"
             vminmax = (0, std_scale * np.std(var_a))
             plot_dynspec(
-                var_a,
+                var_a * nanmask,
                 var_a_plot_name,
                 target_header,
                 nu_slice,
@@ -276,9 +274,9 @@ def inspect_dynspec(
                 )
                 denoise_title = f"{name_str} stokes {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
                 plot_denoising_progression(
-                    target_data[stx_idx, :, :],
-                    target_data_a_whitened[stx_idx, :, :],
-                    target_data_var_normalised[stx_idx, :, :],
+                    target_data[stx_idx, :, :] * nanmask,
+                    target_data_a_whitened[stx_idx, :, :] * nanmask,
+                    target_data_var_normalised[stx_idx, :, :] * nanmask,
                     nu_slice,
                     t_slice,
                     denoise_prog_name,
@@ -300,9 +298,10 @@ def inspect_dynspec(
                 var_e_title = (
                     f"excess variance for {name_str}\nstokes {stx_str} at {coord_str}"
                 )
+                var_e = var_e * np.where(mask==0,np.nan,1)
                 vminmax = (0, std_scale * np.std(var_e[stx_idx, :, :]))
                 plot_dynspec(
-                    var_e[stx_idx, :, :],
+                    var_e[stx_idx, :, :] * nanmask,
                     var_e_plot_name,
                     target_header,
                     nu_slice,
@@ -412,7 +411,6 @@ def inspect_dynspec(
                     mask,
                     n_threads,
                 )
-                smoothed_target_data = conv_target_data
 
                 # smooth target data analytically denoised
                 conv_target_data_a_whitened, cwgt_white = convolve(
@@ -450,7 +448,7 @@ def inspect_dynspec(
                     * np.std(smoothed_target_data_var_normalised[stx_idx, :, :]),
                 )
                 plot_smoothed_data(
-                    smoothed_target_data_var_normalised[stx_idx, :, :],
+                    smoothed_target_data_var_normalised[stx_idx, :, :] * nanmask,
                     nu_slice,
                     t_slice,
                     nu_delta,
@@ -481,11 +479,11 @@ def inspect_dynspec(
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
                     )
                     vminmax = (
-                        -std_scale * np.std(smoothed_target_data[stx_idx, :, :]),
-                        std_scale * np.std(smoothed_target_data[stx_idx, :, :]),
+                        -std_scale * np.std(conv_target_data[stx_idx, :, :]),
+                        std_scale * np.std(conv_target_data[stx_idx, :, :]),
                     )
                     plot_smoothed_data(
-                        smoothed_target_data[stx_idx, :, :],
+                        conv_target_data[stx_idx, :, :] * nanmask,
                         nu_slice,
                         t_slice,
                         nu_delta,
@@ -521,7 +519,7 @@ def inspect_dynspec(
                         * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
                     )
                     plot_smoothed_data(
-                        smoothed_target_data_a_denoised[stx_idx, :, :],
+                        smoothed_target_data_a_denoised[stx_idx, :, :] * nanmask,
                         nu_slice,
                         t_slice,
                         nu_delta,
@@ -554,7 +552,7 @@ def inspect_dynspec(
                         std_scale * np.std(sSNR[stx_idx, :, :]),
                     )
                     plot_smoothed_data(
-                        sSNR[stx_idx, :, :],
+                        sSNR[stx_idx, :, :] * nanmask,
                         nu_slice,
                         t_slice,
                         nu_delta,
