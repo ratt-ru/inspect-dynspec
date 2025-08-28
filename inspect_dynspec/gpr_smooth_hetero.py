@@ -172,6 +172,11 @@ def gpr_smooth_heteroscedastic(
 
     y_obs = R.forward(data_flat)  # observed data
     prec_obs = R.forward(prec_flat)  # observed precisions
+
+    # Σ = diag(1/prec_flat)  ⇒  σ_obs = 1/√prec_obs
+    sigma_obs = 1.0 / jnp.sqrt(prec_obs)
+
+
     y_white = y_obs * prec_obs  # whitened observations
     RT_Sinv_y = R.adjoint(y_white)  # back to full grid
 
@@ -204,4 +209,42 @@ def gpr_smooth_heteroscedastic(
     # and reshape to the original image shape
     x_map = x_map_flat.reshape(Nv, Nt)
 
-    return x_map
+    def sample_latent(key):
+        # split for noise vs η
+        key_n, key_eta = jax.random.split(key)
+
+        # 1) draw ε_obs ∼ N(0, σ_obs²)
+        eps_obs = jax.random.normal(key_n, shape=(R.n_obs,)) * sigma_obs
+
+        # 2) embed into full grid: n_full = Rᵀ ε_obs
+        n_full = R.adjoint(eps_obs)   # shape (Nv*Nt,)
+
+        # 3) ψ = Lᵀ Rᵀ ε_obs  = kron_mv([A.T for A in Ls[::-1]], n_full)
+        psi = kron_mv([A.T for A in Ls], n_full)
+
+        # 4) η ∼ N(0, I) in latent space
+        eta = jax.random.normal(key_eta, shape=(Nv * Nt,))
+
+        # 5) φ = ψ + η
+        phi = psi + eta
+
+        # 6) solve A ξ = φ by CG
+        xi, _ = cg(A_matvec, phi, tol=cg_tol, maxiter=cg_maxiter)
+
+        return xi
+
+    # how many samples to estimate diag(A⁻¹)?
+    n_samples = 50
+    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
+
+    # draw all latent samples
+    xis = jnp.stack([ sample_latent(k) for k in keys ], axis=0)
+
+    # var(z) at each latent index
+    var_z = xis.var(axis=0)   # shape (Nv*Nt,)
+
+    # if you want the variance in pixel‐space: var(x)=L var(z)
+    var_x_flat = kron_mv(Ls, var_z)
+    var_x = var_x_flat.reshape(Nv, Nt)
+
+    return x_map, var_x

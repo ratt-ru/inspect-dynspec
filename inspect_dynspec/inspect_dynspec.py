@@ -1260,14 +1260,16 @@ def get_excess_variance(
     # Add the target data
     onoff_a_whitened[-1, :, :, :] = target_data_a_whitened
 
+    nstack, _, _, _ = onoff_a_whitened.shape
+
     # Convert to Dask array for parallel computation of MAD
-    onoff_a_whitened_dask = da.from_array(onoff_a_whitened, chunks=(1, 1, 1024, 4163))
+    onoff_a_whitened_dask = da.from_array(onoff_a_whitened, chunks=(nstack, 'auto', 'auto', 'auto'))
     onoff_a_whitened_mad = da.median(
         da.abs(onoff_a_whitened_dask - da.median(onoff_a_whitened_dask, axis=0)), axis=0
     ).compute()
     # Normalize the MAD to be equivalent to scipy.stats.median_abs_deviation with scale='normal'
-    onoff_a_whitened_mad /= 0.6745
-    var_e = np.power(onoff_a_whitened_mad, 2)
+    onoff_a_sigma = onoff_a_whitened_mad / 0.6745
+    var_e = np.power(onoff_a_sigma, 2)
     return var_e
 
 
