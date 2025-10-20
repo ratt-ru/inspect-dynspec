@@ -940,26 +940,13 @@ def plot_denoising_progression(
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
     nu_ticks = fetch_axis_ticks(header, axis=2)[nu_slice]
 
-    aspect_ratio_t = (
-        target_data.shape[1] / target_data.shape[0]
-        if target_data.shape[0] > target_data.shape[1]
-        else 1
-    )
-    aspect_ratio_f = (
-        target_data.shape[0] / target_data.shape[1]
-        if target_data.shape[1] > target_data.shape[0]
-        else 1
-    )
-
+    n_freq, n_time = target_data.shape
+    freq_time_ratio = n_freq / max(1, n_time)
+    height_scale = max(1.0, min(freq_time_ratio, 3.0))
+    fig_w = max(figsize[0], 9)
+    fig_h = max(figsize[1], 3) * height_scale
     _, ax = plt.subplots(
-        1,
-        3,
-        figsize=(
-            (figsize[0] * aspect_ratio_t) + 1.6,
-            (figsize[1] * aspect_ratio_f) + 3.3,
-        ),
-        sharex=True,
-        sharey=True,
+        1, 3, figsize=(fig_w, fig_h), sharex=True, sharey=True, constrained_layout=True
     )
     with time_support(simplify=True):
         im0 = ax[0].imshow(
