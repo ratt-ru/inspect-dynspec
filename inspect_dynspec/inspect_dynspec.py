@@ -866,28 +866,27 @@ def plot_smoothed_data(
             cbar0.ax.yaxis.set_major_formatter(FuncFormatter(format_func))
         cbar0.set_label(cbar_label)
 
-        # Define the margin as a fraction of the total ranges
         total_time_range_seconds = (t1 - t0).total_seconds()
-        twin_y_axis = ax.twiny()
-        twin_y_axis.set_xlim(0, len(t_ticks) - 1)
-        # Hide the y-ticks and y-labels for the twin axis
-        twin_y_axis.xaxis.set_ticks([])
-        twin_y_axis.xaxis.set_ticklabels([])
+        import datetime
+        margin_frac = 0.06
+        x_center_dt = t1 - datetime.timedelta(seconds=margin_frac * total_time_range_seconds)
+        x_center = mdates.date2num(x_center_dt)
+        y_span = nu_ticks[-1] - nu_ticks[0]
+        y_center = nu_ticks[0] + (1.0 - margin_frac) * y_span
+        width_days = t_delta / 86400.0
+        height_freq = nu_delta
 
-        ellipse_center_x = len(t_ticks) - 125
-        ellipse_center_y = nu_ticks[-1] - 55
-        ellipse_width_time = t_delta / total_time_range_seconds * len(t_ticks)
-
-        # Create the ellipse
         kernel_ellipse = patches.Ellipse(
-            (ellipse_center_x, ellipse_center_y),
-            width=ellipse_width_time,
-            height=nu_delta,
+            (x_center, y_center),
+            width=width_days,
+            height=height_freq,
             edgecolor="black",
             facecolor="gainsboro",
             linewidth=1,
+            transform=ax.transData,
+            zorder=5,
         )
-        twin_y_axis.add_patch(kernel_ellipse)
+        ax.add_patch(kernel_ellipse)
 
         ax.set_xlim(t0, t1)
         locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
