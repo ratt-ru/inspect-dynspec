@@ -66,6 +66,7 @@ def inspect_dynspec(
     plot_for_paper: bool,
     calc_circular_pol: bool,
     calc_linear_pol: bool,
+    calc_pol_power: bool,
     zero_sub_value_tolerance: float,
     cmap: str,
     dpi: int,
@@ -93,6 +94,18 @@ def inspect_dynspec(
 
     cmap = check_colormap(cmap)
 
+    # Adjust for additional "Stokes" (but not really) parameters as more are added
+    STOKES_LABELS = ["I", "Q", "U", "V", "C", "L", "P"]
+    STOKES_NAMES = [
+        "Stokes I",
+        "Stokes Q",
+        "Stokes U",
+        "Stokes V",
+        "Circular Polarisation",
+        "Linear Polarisation",
+        "Total Polarisation Power",
+    ]
+
     paths = get_files_paths(root)
     nof_targets = len(paths["target"]["data"])
     nof_off_targets = len(paths["off_target"]["data"])
@@ -112,7 +125,7 @@ def inspect_dynspec(
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
 
-        stokes_indices = [i for i, char in enumerate("IQUV") if char in stokes]
+        stokes_indices = [i for i, char in enumerate(STOKES_LABELS) if char in stokes]
         if stokes_indices:
             stokes_slice = np.array(stokes_indices, dtype=int)
         else:
@@ -135,9 +148,9 @@ def inspect_dynspec(
                 index=target,
             ).compute()
         )
-        
+
         mask = get_mask(target_data, blow_up_scale=1e4)
-        nanmask = np.where(mask==0,np.nan,1)
+        nanmask = np.where(mask == 0, np.nan, 1)
 
         LOGGER.info(
             f"""
@@ -267,12 +280,12 @@ def inspect_dynspec(
         """
         if debug:
             for stx_idx, stx in enumerate(stokes_slice):
-                stx_str = "IQUV"[stx]
+                stx_str = STOKES_NAMES[stx]
                 denoise_prog_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_denoise_progression.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ', '_')}_denoise_progression.png",
                 )
-                denoise_title = f"{name_str} stokes {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
+                denoise_title = f"{name_str} {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
                 plot_denoising_progression(
                     target_data[stx_idx, :, :] * nanmask,
                     target_data_a_whitened[stx_idx, :, :] * nanmask,
@@ -288,17 +301,17 @@ def inspect_dynspec(
                     figsize=figsize,
                 )
                 LOGGER.info(
-                    f"Wrote denoising progression plot for Stokes {stx_str} to {denoise_prog_name}"
+                    f"Wrote denoising progression plot for {stx_str} to {denoise_prog_name}"
                 )
 
                 var_e_plot_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_var_e.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ', '_')}_var_e.png",
                 )
                 var_e_title = (
-                    f"excess variance for {name_str}\nstokes {stx_str} at {coord_str}"
+                    f"excess variance for {name_str}\n{stx_str} at {coord_str}"
                 )
-                var_e = var_e * np.where(mask==0,np.nan,1)
+                var_e = var_e * np.where(mask == 0, np.nan, 1)
                 vminmax = (0, std_scale * np.std(var_e[stx_idx, :, :]))
                 plot_dynspec(
                     var_e[stx_idx, :, :] * nanmask,
@@ -314,7 +327,7 @@ def inspect_dynspec(
                     figsize=figsize,
                 )
                 LOGGER.info(
-                    f"Wrote excess variance plot for Stokes {stx_str} to {var_e_plot_name}"
+                    f"Wrote excess variance plot for {stx_str} to {var_e_plot_name}"
                 )
 
         """
@@ -359,6 +372,32 @@ def inspect_dynspec(
 
                 target_data_var_normalised = np.append(
                     target_data_var_normalised, linear_data_e_a_denoised, axis=0
+                )
+                # we must also extend wgt to account for the new stokes parameter (1's)
+                wgt = np.append(
+                    wgt, np.ones(wgt[0, :, :].shape)[np.newaxis, :, :], axis=0
+                )
+
+        stokes_slice = np.unique(stokes_slice)
+
+        """
+        ################### OPTIONALLY CALCULATING TOTAL POLARISATION POWER ##########################
+        """
+        if calc_pol_power:
+            # check that Q U and V stokes parameters were specified:
+            if 1 not in stokes_slice or 2 not in stokes_slice or 3 not in stokes_slice:
+                LOGGER.warning(
+                    "To calculate polarisation power, Stokes Q, U and V must be specified, skipping..."
+                )
+            else:
+                tp_data_e_a_denoised = calc_total_polarised_power(
+                    target_data_var_normalised, stokes_slice
+                )
+                # add index 6 to stokes slice:
+                stokes_slice = np.append(stokes_slice, 6)
+
+                target_data_var_normalised = np.append(
+                    target_data_var_normalised, tp_data_e_a_denoised, axis=0
                 )
                 # we must also extend wgt to account for the new stokes parameter (1's)
                 wgt = np.append(
@@ -430,16 +469,16 @@ def inspect_dynspec(
                 )
 
             for stx_idx, stx in enumerate(stokes_slice):
-                stx_str = "IQUV"[stx]
+                stx_str = STOKES_NAMES[stx]
 
                 sdata_title = (
                     ""
                     if plot_for_paper
-                    else f"Analytically and excess denoised, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    else f"Analytically and excess denoised, {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                 )
                 sdata_plot_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_e_denoise.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_e_denoise.png",
                 )
                 vminmax = (
                     -std_scale
@@ -465,18 +504,18 @@ def inspect_dynspec(
                     return_plot=False,
                 )
                 LOGGER.info(
-                    f"Wrote sdata smoothed plot for stokes {stx_str} to {sdata_plot_name}"
+                    f"Wrote sdata smoothed plot for {stx_str} to {sdata_plot_name}"
                 )
 
                 if debug:
                     data_raw_title = (
                         ""
                         if plot_for_paper
-                        else f"raw target, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        else f"raw target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
                     )
                     data_raw_plot_name = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
                     )
                     vminmax = (
                         -std_scale * np.std(conv_target_data[stx_idx, :, :]),
@@ -500,17 +539,17 @@ def inspect_dynspec(
                         return_plot=False,
                     )
                     LOGGER.info(
-                        f"Wrote target smoothed plot for stokes {stx_str} to {data_raw_plot_name}"
+                        f"Wrote target smoothed plot for {stx_str} to {data_raw_plot_name}"
                     )
 
                     data_a_title = (
                         ""
                         if plot_for_paper
-                        else f"Analytically denoised target, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        else f"Analytically denoised target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
                     )
                     data_a_plot_name = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
                     )
                     vminmax = (
                         -std_scale
@@ -536,16 +575,16 @@ def inspect_dynspec(
                         return_plot=False,
                     )
                     LOGGER.info(
-                        f"Wrote target smoothed plot for stokes {stx_str} to {data_a_plot_name}"
+                        f"Wrote target smoothed plot for {stx_str} to {data_a_plot_name}"
                     )
                     sSNR_title = (
                         ""
                         if plot_for_paper
-                        else f"sSNR, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        else f"sSNR, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
                     )
                     sSNR_plot_name = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
                     )
                     vminmax = (
                         -std_scale * np.std(sSNR[stx_idx, :, :]),
@@ -569,7 +608,7 @@ def inspect_dynspec(
                         return_plot=False,
                     )
                     LOGGER.info(
-                        f"Wrote sSNR smoothed plot for stokes {stx_str} to {sSNR_plot_name}"
+                        f"Wrote sSNR smoothed plot for {stx_str} to {sSNR_plot_name}"
                     )
 
 
@@ -692,6 +731,29 @@ def get_mask(data: np.ndarray, blow_up_scale: float = 1e4) -> np.ndarray:
     data = data * blow_up_scale
     mask = np.where(data[0, :, :] == 0, 0, mask)
     return mask
+
+
+def calc_total_polarised_power(
+    arg_data: np.ndarray, stokes_slice: np.ndarray
+) -> np.ndarray:
+    """
+    Args:
+        data: 3D array of data (n_pol, n_freq, n_time).
+        stokes_slice: Slice of the Stokes parameters to consider.
+    Returns:
+        3D array of total polarised power sqrt(Q^2 + U^2 + V^2).
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+    v_indices = np.where(stokes_slice == 3)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+    V = data[v_indices, :, :]
+    total_pol = np.sqrt(np.pow(Q, 2) + np.pow(U, 2) + np.pow(V, 2))
+    total_pol_sub_mean = total_pol - np.mean(total_pol)
+    return total_pol_sub_mean[np.newaxis, :, :]
 
 
 def calc_circ_polarisation(
@@ -868,8 +930,11 @@ def plot_smoothed_data(
 
         total_time_range_seconds = (t1 - t0).total_seconds()
         import datetime
+
         margin_frac = 0.06
-        x_center_dt = t1 - datetime.timedelta(seconds=margin_frac * total_time_range_seconds)
+        x_center_dt = t1 - datetime.timedelta(
+            seconds=margin_frac * total_time_range_seconds
+        )
         x_center = mdates.date2num(x_center_dt)
         y_span = nu_ticks[-1] - nu_ticks[0]
         y_center = nu_ticks[0] + (1.0 - margin_frac) * y_span

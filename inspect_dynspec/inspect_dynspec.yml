@@ -69,7 +69,11 @@ cabs:
         default: false
       calc-linear-pol:
         dtype: bool
-        info: "Calculate linear polarisation fraction sqrt((Q^2 + U^2) / I^2) after smoothing. Will also plot if --plot-smooth is set."
+        info: "Calculate linear polarisation fraction sqrt((Q^2 + U^2) / I^2) after smoothing."
+        default: false
+      calc-pol-power:
+        dtype: bool
+        info: "Calculate polarisation power (Q^2 + U^2 + V^2) after smoothing."
         default: false
       zero-sub-value-tolerance:
         dtype: float
