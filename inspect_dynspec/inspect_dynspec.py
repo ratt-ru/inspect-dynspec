@@ -866,28 +866,27 @@ def plot_smoothed_data(
             cbar0.ax.yaxis.set_major_formatter(FuncFormatter(format_func))
         cbar0.set_label(cbar_label)
 
-        # Define the margin as a fraction of the total ranges
         total_time_range_seconds = (t1 - t0).total_seconds()
-        twin_y_axis = ax.twiny()
-        twin_y_axis.set_xlim(0, len(t_ticks) - 1)
-        # Hide the y-ticks and y-labels for the twin axis
-        twin_y_axis.xaxis.set_ticks([])
-        twin_y_axis.xaxis.set_ticklabels([])
+        import datetime
+        margin_frac = 0.06
+        x_center_dt = t1 - datetime.timedelta(seconds=margin_frac * total_time_range_seconds)
+        x_center = mdates.date2num(x_center_dt)
+        y_span = nu_ticks[-1] - nu_ticks[0]
+        y_center = nu_ticks[0] + (1.0 - margin_frac) * y_span
+        width_days = t_delta / 86400.0
+        height_freq = nu_delta
 
-        ellipse_center_x = len(t_ticks) - 125
-        ellipse_center_y = nu_ticks[-1] - 55
-        ellipse_width_time = t_delta / total_time_range_seconds * len(t_ticks)
-
-        # Create the ellipse
         kernel_ellipse = patches.Ellipse(
-            (ellipse_center_x, ellipse_center_y),
-            width=ellipse_width_time,
-            height=nu_delta,
+            (x_center, y_center),
+            width=width_days,
+            height=height_freq,
             edgecolor="black",
             facecolor="gainsboro",
             linewidth=1,
+            transform=ax.transData,
+            zorder=5,
         )
-        twin_y_axis.add_patch(kernel_ellipse)
+        ax.add_patch(kernel_ellipse)
 
         ax.set_xlim(t0, t1)
         locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
@@ -941,26 +940,13 @@ def plot_denoising_progression(
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
     nu_ticks = fetch_axis_ticks(header, axis=2)[nu_slice]
 
-    aspect_ratio_t = (
-        target_data.shape[1] / target_data.shape[0]
-        if target_data.shape[0] > target_data.shape[1]
-        else 1
-    )
-    aspect_ratio_f = (
-        target_data.shape[0] / target_data.shape[1]
-        if target_data.shape[1] > target_data.shape[0]
-        else 1
-    )
-
+    n_freq, n_time = target_data.shape
+    freq_time_ratio = n_freq / max(1, n_time)
+    height_scale = max(1.0, min(freq_time_ratio, 3.0))
+    fig_w = max(figsize[0], 9)
+    fig_h = max(figsize[1], 3) * height_scale
     _, ax = plt.subplots(
-        1,
-        3,
-        figsize=(
-            (figsize[0] * aspect_ratio_t) + 1.6,
-            (figsize[1] * aspect_ratio_f) + 3.3,
-        ),
-        sharex=True,
-        sharey=True,
+        1, 3, figsize=(fig_w, fig_h), sharex=True, sharey=True, constrained_layout=True
     )
     with time_support(simplify=True):
         im0 = ax[0].imshow(
