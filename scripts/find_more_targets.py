@@ -195,13 +195,17 @@ def find_more_targets(
 
     if os.path.exists(ecsv):
         orig_df = read_existing_ecsv(ecsv)
-        orig_targets = pd.DataFrame({
-            "star_name": orig_df["id"],
-            "ra": orig_df["pos.ra"],
-            "dec": orig_df["pos.dec"],
-            "gaia_dr3": orig_df["id"].apply(lambda x: x.split(":")[-1] if ":" in str(x) else str(x)),
-            "star_distance": np.nan,
-        })
+        orig_targets = pd.DataFrame(
+            {
+                "star_name": orig_df["id"],
+                "ra": orig_df["pos.ra"],
+                "dec": orig_df["pos.dec"],
+                "gaia_dr3": orig_df["id"].apply(
+                    lambda x: x.split(":")[-1] if ":" in str(x) else str(x)
+                ),
+                "star_distance": np.nan,
+            }
+        )
     else:
         orig_targets = pd.DataFrame(
             {
@@ -232,8 +236,8 @@ def find_more_targets(
 
             if not np.isnan(star_distance) and star_distance <= distance:
                 print(
-                        f"Gaia source {gaia_source['source_id']} found, at distance ({star_distance:.2f} pc). Appending."
-                    )
+                    f"Gaia source {gaia_source['source_id']} found, at distance ({star_distance:.2f} pc). Appending."
+                )
                 try:
                     ra_val = gaia_source["ra"]
                     dec_val = gaia_source["dec"]
@@ -257,19 +261,31 @@ def find_more_targets(
                     target_df = target_df[~close_mask]
                 if gaia_dr3_id not in target_df["gaia_dr3"].values:
                     new_row_df = pd.DataFrame(
-                        [[str(sol_id), ra_val, dec_val, str(gaia_dr3_id), star_distance]],
+                        [
+                            [
+                                str(sol_id),
+                                ra_val,
+                                dec_val,
+                                str(gaia_dr3_id),
+                                star_distance,
+                            ]
+                        ],
                         columns=["star_name", "ra", "dec", "gaia_dr3", "star_distance"],
-                    ).astype({
-                        "star_name": "str",
-                        "ra": "float",
-                        "dec": "float",
-                        "gaia_dr3": "str",
-                        "star_distance": "float",
-                    })
+                    ).astype(
+                        {
+                            "star_name": "str",
+                            "ra": "float",
+                            "dec": "float",
+                            "gaia_dr3": "str",
+                            "star_distance": "float",
+                        }
+                    )
                     if target_df.empty:
                         target_df = new_row_df
                     else:
-                        target_df = pd.concat([target_df, new_row_df], ignore_index=True)
+                        target_df = pd.concat(
+                            [target_df, new_row_df], ignore_index=True
+                        )
             else:
                 if not np.isnan(star_distance):
                     print(
@@ -281,9 +297,8 @@ def find_more_targets(
     new_rows = []
     orig_ids = set(orig_df["id"]) if os.path.exists(ecsv) else set()
     for idx, row in target_df.iterrows():
-        if (
-            row["star_name"] in orig_ids
-            or ("id" in row and row["star_name"] == row["id"])
+        if row["star_name"] in orig_ids or (
+            "id" in row and row["star_name"] == row["id"]
         ):
             id_val = row["star_name"]
         else:
