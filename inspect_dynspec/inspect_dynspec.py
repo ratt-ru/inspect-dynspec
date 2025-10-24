@@ -102,8 +102,8 @@ def inspect_dynspec(
         "Stokes Q",
         "Stokes U",
         "Stokes V",
-        "Circular Polarisation",
-        "Linear Polarisation",
+        "Circular Polarisation Fraction",
+        "Linear Polarisation Fraction",
         "Total Polarised Power",
         "RM Synthesis",
     ]
@@ -331,13 +331,13 @@ def inspect_dynspec(
                 )
 
         """
-        ################### OPTIONALLY CALCULATE CIRCULAR POLARISATION ########################
+        ################### OPTIONALLY CALCULATE CIRCULAR POLARISATION FRACTION ########################
         """
         if calc_circular_pol:
             # check that both I and V stokes parameters were specified:
             if 0 not in stokes_slice or 3 not in stokes_slice:
                 LOGGER.warning(
-                    "To calculate circular polarisation, both Stokes I and V must be specified, skipping..."
+                    "To calculate circular polarisation fraction, both Stokes I and V must be specified, skipping..."
                 )
             else:
                 circ_data_e_a_denoised = calc_circ_polarisation(
@@ -355,13 +355,13 @@ def inspect_dynspec(
                 )
 
         """
-        ################### OPTIONALLY CALCULATING LINEAR POLARISATION ##########################
+        ################### OPTIONALLY CALCULATING LINEAR POLARISATION FRACTION ##########################
         """
         if calc_linear_pol:
             # check that I Q and U stokes parameters were specified:
             if 0 not in stokes_slice or 1 not in stokes_slice or 2 not in stokes_slice:
                 LOGGER.warning(
-                    "To calculate linear polarisation, Stokes I, Q and U must be specified, skipping..."
+                    "To calculate linear polarisation fraction, Stokes I, Q and U must be specified, skipping..."
                 )
             else:
                 linear_data_e_a_denoised = calc_linear_polarisation(
@@ -437,52 +437,60 @@ def inspect_dynspec(
                 cwgt
             )  # i.e sSNR = sdata / sstd = sdata * sqrt(wgt)
 
+            """
+            ################### OPTIONALLY CALCULATING RM SYNTHESIS ##########################
+            """
             if calc_rm_synth is not None:
-                smoothed_target_data_var_denoised_nan = (
-                    smoothed_target_data_var_normalised * nanmask
-                )
-                rm_synth_cdata, phi_range = calc_rm_synthesis(
-                    smoothed_target_data_var_denoised_nan,
-                    target_header,
-                    mask,
-                    stokes_slice,
-                    calc_rm_synth[0],
-                    calc_rm_synth[1],
-                    calc_rm_synth[2],
-                )
-                rm_synth_data = np.abs(rm_synth_cdata)
-                rm_synth_title = (
-                    ""
-                    if plot_for_paper
-                    else f"RM Synthesis for {name_str}\nat {coord_str} with kernel {kern_str}"
-                )
-                rmsynth_plot_name = os.path.join(
-                    output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_rm_synth_{int(nu_delta)}MHz_{int(t_delta)}s.png",
-                )
-                vminmax = (
-                    None,
-                    std_scale * np.nanstd(rm_synth_data[:, :]),
-                )
-                plot_smoothed_data(
-                    smoothed_data=rm_synth_data,
-                    nu_delta=nu_delta,
-                    t_delta=t_delta,
-                    output=rmsynth_plot_name,
-                    t_ticks=t_ticks,
-                    nu_ticks=phi_range,
-                    vminmax=vminmax,
-                    vcenter=0,
-                    dpi=dpi,
-                    cmap=cmap,
-                    title=rm_synth_title,
-                    cbar_label="mJy",
-                    figsize=figsize,
-                    ylabel="$\\phi$ (rad/$\mu\\text{m}^2$) $\\times 10^{-3}$",
-                    plot_ellipse=False,
-                    return_plot=False,
-                )
-                LOGGER.info(f"Wrote rm synth smoothed plot to {rmsynth_plot_name}")
+                if 1 not in stokes_slice or 2 not in stokes_slice:
+                    LOGGER.warning(
+                        "To calculate rm synthesis, Stokes Q and U must be specified, skipping..."
+                    )
+                else:
+                    smoothed_target_data_var_denoised_nan = (
+                        smoothed_target_data_var_normalised * nanmask
+                    )
+                    rm_synth_cdata, phi_range = calc_rm_synthesis(
+                        smoothed_target_data_var_denoised_nan,
+                        target_header,
+                        mask,
+                        stokes_slice,
+                        calc_rm_synth[0],
+                        calc_rm_synth[1],
+                        calc_rm_synth[2],
+                    )
+                    rm_synth_data = np.abs(rm_synth_cdata)
+                    rm_synth_title = (
+                        ""
+                        if plot_for_paper
+                        else f"RM Synthesis for {name_str}\nat {coord_str} with kernel {kern_str}"
+                    )
+                    rmsynth_plot_name = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_rm_synth_{int(nu_delta)}MHz_{int(t_delta)}s.png",
+                    )
+                    vminmax = (
+                        None,
+                        std_scale * np.nanstd(rm_synth_data[:, :]),
+                    )
+                    plot_smoothed_data(
+                        smoothed_data=rm_synth_data,
+                        nu_delta=nu_delta,
+                        t_delta=t_delta,
+                        output=rmsynth_plot_name,
+                        t_ticks=t_ticks,
+                        nu_ticks=phi_range,
+                        vminmax=vminmax,
+                        vcenter=0,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=rm_synth_title,
+                        cbar_label="",
+                        figsize=figsize,
+                        ylabel="$\\phi$ (rad/$\mu\\text{m}^2$) $\\times 10^{-3}$",
+                        plot_ellipse=False,
+                        return_plot=False,
+                    )
+                    LOGGER.info(f"Wrote rm synth smoothed plot to {rmsynth_plot_name}")
 
             if debug:
                 # smooth target data
@@ -546,7 +554,7 @@ def inspect_dynspec(
                     dpi=dpi,
                     cmap=cmap,
                     title=sdata_title,
-                    cbar_label="mJy",
+                    cbar_label="mJy" if stx_idx in [0, 1, 2, 3] else "",
                     figsize=figsize,
                     return_plot=False,
                 )
