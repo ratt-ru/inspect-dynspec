@@ -826,26 +826,31 @@ def calc_rm_synthesis(
     Q = data[q_indices, :, :]
     U = data[u_indices, :, :]
 
+    # complex linear polarisation: shape (n_freq, n_time)
     complex_linear_pol = Q + 1j * U
 
     lambda_val, _ = get_refval_and_axisvals(header, axis=2)
-    lambda_sq = (1 / (lambda_val / 1000)) ** 2  # put it in GHz and square it
+    lambda_sq = (1 / (lambda_val / 1000)) ** 2
 
     phi_range = np.linspace(phi_min, phi_max, n_phi)
-    fdata = np.zeros((len(phi_range), complex_linear_pol.shape[1]), dtype=complex)
-    for t in range(complex_linear_pol.shape[1]):
-        nof_chan = np.count_nonzero(mask[:, t])
-        for k, phi in enumerate(phi_range):
-            if nof_chan == 0:
-                fdata[k, t] = np.nan
-                continue
-            try:
-                fdata[k, t] = pow(nof_chan, -1) * np.nansum(
-                    complex_linear_pol[:, t]
-                    * np.exp(-2j * (lambda_sq) * phi / nof_chan)
-                )
-            except Exception as e:
-                print(e)
+    n_freq, n_time = complex_linear_pol.shape
+
+    fdata = np.empty((len(phi_range), n_time), dtype=complex)
+    fdata[:] = np.nan + 0j
+
+    for t in range(n_time):
+        good_mask = mask[:, t].astype(bool)
+        nof_chan = np.count_nonzero(good_mask)
+        if nof_chan == 0:
+            continue
+
+        vec = complex_linear_pol[good_mask, t]
+        lam_sq_sel = lambda_sq[good_mask]
+        exp_matrix = np.exp(-2j * np.outer(lam_sq_sel, phi_range) / float(nof_chan))
+
+        res = vec @ exp_matrix
+
+        fdata[:, t] = res / float(nof_chan)
 
     return fdata, phi_range
 
