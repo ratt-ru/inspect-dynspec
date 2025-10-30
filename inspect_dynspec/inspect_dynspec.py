@@ -563,106 +563,107 @@ def inspect_dynspec(
                 )
 
                 if debug:
-                    data_raw_title = (
-                        ""
-                        if plot_for_paper
-                        else f"raw target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                    )
-                    data_raw_plot_name = os.path.join(
-                        output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
-                    )
-                    vminmax = (
-                        -std_scale * np.std(conv_target_data[stx_idx, :, :]),
-                        std_scale * np.std(conv_target_data[stx_idx, :, :]),
-                    )
-                    plot_smoothed_data(
-                        smoothed_data=conv_target_data[stx_idx, :, :] * nanmask,
-                        nu_delta=nu_delta,
-                        t_delta=t_delta,
-                        output=data_raw_plot_name,
-                        t_ticks=t_ticks,
-                        nu_ticks=nu_ticks,
-                        vminmax=vminmax,
-                        vcenter=0,
-                        dpi=dpi,
-                        cmap=cmap,
-                        title=data_raw_title,
-                        cbar_label="mJy",
-                        figsize=figsize,
-                        return_plot=False,
-                    )
-                    LOGGER.info(
-                        f"Wrote target smoothed plot for {stx_str} to {data_raw_plot_name}"
-                    )
+                    if stx_idx < 4:  # only plot for I, Q, U, V
+                        data_raw_title = (
+                            ""
+                            if plot_for_paper
+                            else f"raw target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        )
+                        data_raw_plot_name = os.path.join(
+                            output_dir,
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
+                        )
+                        vminmax = (
+                            -std_scale * np.std(conv_target_data[stx_idx, :, :]),
+                            std_scale * np.std(conv_target_data[stx_idx, :, :]),
+                        )
+                        plot_smoothed_data(
+                            smoothed_data=conv_target_data[stx_idx, :, :] * nanmask,
+                            nu_delta=nu_delta,
+                            t_delta=t_delta,
+                            output=data_raw_plot_name,
+                            t_ticks=t_ticks,
+                            nu_ticks=nu_ticks,
+                            vminmax=vminmax,
+                            vcenter=0,
+                            dpi=dpi,
+                            cmap=cmap,
+                            title=data_raw_title,
+                            cbar_label="mJy",
+                            figsize=figsize,
+                            return_plot=False,
+                        )
+                        LOGGER.info(
+                            f"Wrote target smoothed plot for {stx_str} to {data_raw_plot_name}"
+                        )
 
-                    data_a_title = (
-                        ""
-                        if plot_for_paper
-                        else f"Analytically denoised target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                    )
-                    data_a_plot_name = os.path.join(
-                        output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
-                    )
-                    vminmax = (
-                        -std_scale
-                        * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
-                        std_scale
-                        * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
-                    )
-                    plot_smoothed_data(
-                        smoothed_data=smoothed_target_data_a_denoised[stx_idx, :, :]
-                        * nanmask,
-                        nu_delta=nu_delta,
-                        t_delta=t_delta,
-                        output=data_a_plot_name,
-                        t_ticks=t_ticks,
-                        nu_ticks=nu_ticks,
-                        vminmax=vminmax,
-                        vcenter=0,
-                        dpi=dpi,
-                        cmap=cmap,
-                        title=data_a_title,
-                        cbar_label="mJy",
-                        figsize=figsize,
-                        return_plot=False,
-                    )
-                    LOGGER.info(
-                        f"Wrote target smoothed plot for {stx_str} to {data_a_plot_name}"
-                    )
-                    sSNR_title = (
-                        ""
-                        if plot_for_paper
-                        else f"sSNR, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                    )
-                    sSNR_plot_name = os.path.join(
-                        output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
-                    )
-                    vminmax = (
-                        -std_scale * np.std(sSNR[stx_idx, :, :]),
-                        std_scale * np.std(sSNR[stx_idx, :, :]),
-                    )
-                    plot_smoothed_data(
-                        smoothed_data=sSNR[stx_idx, :, :] * nanmask,
-                        nu_delta=nu_delta,
-                        t_delta=t_delta,
-                        output=sSNR_plot_name,
-                        t_ticks=t_ticks,
-                        nu_ticks=nu_ticks,
-                        vminmax=vminmax,
-                        vcenter=0,
-                        dpi=dpi,
-                        cmap=cmap,
-                        title=sSNR_title,
-                        cbar_label="SNR",
-                        figsize=figsize,
-                        return_plot=False,
-                    )
-                    LOGGER.info(
-                        f"Wrote sSNR smoothed plot for {stx_str} to {sSNR_plot_name}"
-                    )
+                        data_a_title = (
+                            ""
+                            if plot_for_paper
+                            else f"Analytically denoised target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        )
+                        data_a_plot_name = os.path.join(
+                            output_dir,
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
+                        )
+                        vminmax = (
+                            -std_scale
+                            * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
+                            std_scale
+                            * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
+                        )
+                        plot_smoothed_data(
+                            smoothed_data=smoothed_target_data_a_denoised[stx_idx, :, :]
+                            * nanmask,
+                            nu_delta=nu_delta,
+                            t_delta=t_delta,
+                            output=data_a_plot_name,
+                            t_ticks=t_ticks,
+                            nu_ticks=nu_ticks,
+                            vminmax=vminmax,
+                            vcenter=0,
+                            dpi=dpi,
+                            cmap=cmap,
+                            title=data_a_title,
+                            cbar_label="mJy",
+                            figsize=figsize,
+                            return_plot=False,
+                        )
+                        LOGGER.info(
+                            f"Wrote target smoothed plot for {stx_str} to {data_a_plot_name}"
+                        )
+                        sSNR_title = (
+                            ""
+                            if plot_for_paper
+                            else f"sSNR, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        )
+                        sSNR_plot_name = os.path.join(
+                            output_dir,
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
+                        )
+                        vminmax = (
+                            -std_scale * np.std(sSNR[stx_idx, :, :]),
+                            std_scale * np.std(sSNR[stx_idx, :, :]),
+                        )
+                        plot_smoothed_data(
+                            smoothed_data=sSNR[stx_idx, :, :] * nanmask,
+                            nu_delta=nu_delta,
+                            t_delta=t_delta,
+                            output=sSNR_plot_name,
+                            t_ticks=t_ticks,
+                            nu_ticks=nu_ticks,
+                            vminmax=vminmax,
+                            vcenter=0,
+                            dpi=dpi,
+                            cmap=cmap,
+                            title=sSNR_title,
+                            cbar_label="SNR",
+                            figsize=figsize,
+                            return_plot=False,
+                        )
+                        LOGGER.info(
+                            f"Wrote sSNR smoothed plot for {stx_str} to {sSNR_plot_name}"
+                        )
 
 
 @delayed
