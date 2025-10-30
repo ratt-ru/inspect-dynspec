@@ -77,8 +77,10 @@ cabs:
         default: false
       calc-rm-synth:
         info: "Calculate RM synthesis with phi params: [phi_min, phi_max, n_phi]. E.g. rm-synth=[-100,100,256]"
-        dtype: Tuple[float,float,int]
+        dtype: List[int]
         required: false
+        policies:
+          repeat: '[]'
       zero-sub-value-tolerance:
         dtype: float
         info: "Circular and linear polarization fractions require division by I. To avoid divide by zero issues, values within 0 ± tolerance are substituted for this tolerance value."
