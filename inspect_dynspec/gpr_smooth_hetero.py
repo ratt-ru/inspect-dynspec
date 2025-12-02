@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import cholesky
 from jax.scipy.sparse.linalg import cg
+jax.config.update("jax_enable_x64", True)
 import numpy as np
 
 
@@ -64,7 +65,7 @@ def rbf_kernel(grid, lengthscale, variance=1.0):
     """
     RBF kernel K_ij = variance * exp(-0.5 * (xi - xj)^2 / lengthscale^2)
     """
-    d2 = jnp.subtract.outer(grid, grid) ** 2
+    d2 = (jnp.subtract.outer(grid, grid) ** 2)
     return variance * jnp.exp(-0.5 * d2 / lengthscale**2)
 
 
@@ -126,7 +127,7 @@ def make_A_matvec(Ls, mask, prec_flat):
         # 4) Rᵀ (Σ⁻¹ Rx)
         RT_Sinv_Rx = mask.adjoint(Sinv_Rx)
         # 5) Lᵀ term: kron_mv([A.T for A in Ls[::-1]], RT_Sinv_Rx)
-        LT_term = kron_mv([A.T for A in Ls[::-1]], RT_Sinv_Rx)
+        LT_term = kron_mv([A.T for A in Ls], RT_Sinv_Rx)
         # 6) Return (I + …) z
         return z + LT_term
 
@@ -143,6 +144,7 @@ def gpr_smooth_heteroscedastic(
     jitter: float = 1e-6,
     cg_tol: float = 1e-6,
     cg_maxiter: int = 200,
+    nof_weight_samples: int = 20
 ) -> jnp.ndarray:
     """
     2D Gaussian‐Process smoothing via an RBF kernel with heteroscedastic noise.
@@ -157,6 +159,7 @@ def gpr_smooth_heteroscedastic(
       jitter   : float        — small value added to diagonal for numerical stability.
       cg_tol   : float        — CG solver tolerance.
       cg_maxiter: int         — maximum number of CG iterations.
+      nof_weight_samples: int — number of latent samples to estimate posterior variance.
 
     Returns:
       float[H, W] — posterior mean (“smoothed”) image.
@@ -164,8 +167,8 @@ def gpr_smooth_heteroscedastic(
 
     # Prep:
     Nv, Nt = data.shape
-    t_grid = jnp.linspace(0, 1, Nt)
-    v_grid = jnp.linspace(0, 1, Nv)
+    t_grid = jnp.linspace(0, 1, Nt, dtype=jnp.float64)
+    v_grid = jnp.linspace(0, 1, Nv, dtype=jnp.float64)
     R = Mask(mask)
     data_flat = data.ravel()
     prec_flat = weights.ravel()
@@ -174,8 +177,7 @@ def gpr_smooth_heteroscedastic(
     prec_obs = R.forward(prec_flat)  # observed precisions
 
     # Σ = diag(1/prec_flat)  ⇒  σ_obs = 1/√prec_obs
-    sigma_obs = 1.0 / jnp.sqrt(prec_obs)
-
+    sigma_obs = 1.0 / jnp.sqrt(np.where(prec_obs==0, 1, prec_obs))
 
     y_white = y_obs * prec_obs  # whitened observations
     RT_Sinv_y = R.adjoint(y_white)  # back to full grid
@@ -185,8 +187,8 @@ def gpr_smooth_heteroscedastic(
     Kv = rbf_kernel(v_grid, lengthscale=l_length_nu, variance=sigma2)
 
     # LᵀL = K so then we can compute Cholesky factors
-    Lt = cholesky(Kt + jitter * jnp.eye(Nt), lower=True)
-    Lv = cholesky(Kv + jitter * jnp.eye(Nv), lower=True)
+    Lt = cholesky(Kt + jitter * jnp.eye(Nt, dtype=jnp.float64), lower=True)
+    Lv = cholesky(Kv + jitter * jnp.eye(Nv, dtype=jnp.float64), lower=True)
     Ls = [Lv, Lt]
 
     # (I + Lᵀ Rᵀ Σ⁻¹ R L) * Eta = Lᵀ Rᵀ Σ⁻¹ * data
@@ -199,7 +201,7 @@ def gpr_smooth_heteroscedastic(
     b = kron_mv([A.T for A in Ls], RT_Sinv_y)
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
-    z0 = jnp.zeros(Nv * Nt)
+    z0 = jnp.zeros(Nv * Nt, dtype=jnp.float64)
     Eta_map, info = cg(A_matvec, b, x0=z0, tol=cg_tol, maxiter=cg_maxiter)
     if info != 0:
         print("Jax CG result, info =", info)
@@ -233,18 +235,13 @@ def gpr_smooth_heteroscedastic(
 
         return xi
 
-    # how many samples to estimate diag(A⁻¹)?
-    n_samples = 50
-    keys = jax.random.split(jax.random.PRNGKey(0), n_samples)
+    # nof samples to estimate diag(A⁻¹)?
+    keys = jax.random.split(jax.random.PRNGKey(0), nof_weight_samples)
 
     # draw all latent samples
-    xis = jnp.stack([ sample_latent(k) for k in keys ], axis=0)
+    xis = jnp.stack([sample_latent(k) for k in keys], axis=0)
+    x_n = jax.vmap(lambda xi: kron_mv(Ls, xi))(xis) # for each sample, map xi through L to get sample in original space
 
-    # var(z) at each latent index
-    var_z = xis.var(axis=0)   # shape (Nv*Nt,)
+    var_x = jnp.var(x_n, axis=0).reshape(Nv, Nt) # compute var across nof_weight_samples
 
-    # if you want the variance in pixel‐space: var(x)=L var(z)
-    var_x_flat = kron_mv(Ls, var_z)
-    var_x = var_x_flat.reshape(Nv, Nt)
-
-    return x_map, var_x
+    return x_map, var_x, xis
