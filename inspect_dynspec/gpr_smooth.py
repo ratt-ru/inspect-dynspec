@@ -5,12 +5,11 @@ from jax.scipy.sparse.linalg import cg
 
 jax.config.update("jax_enable_x64", True)
 from typing import Optional, Tuple
-import numpy as np
 
 
 # Taken from Quartical and written by Landman Bester
 # https://github.com/ratt-ru/QuartiCal/blob/1fc6e5ff61365ef4164be209a970bdb4483703b0/quartical/utils/maths.py#L70
-def fit_hyperplane(x, y):
+def fit_hyperplane(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     """Approximate a surface by a hyperplane in D dimensions
 
     inputs:
@@ -25,29 +24,29 @@ def fit_hyperplane(x, y):
     """
     D, N = x.shape
     y = y.squeeze()[None, :]
-    z = np.vstack((x, y))
-    centroid = np.zeros((D + 1, 1), dtype=y.dtype)
+    z = jnp.vstack((x, y))
+    centroid = jnp.zeros((D + 1, 1), dtype=y.dtype)
     for d in range(D + 1):
         if d < D:
-            centroid[d, 0] = np.sum(x[d]) / N
+            centroid = centroid.at[d, 0].set(jnp.sum(x[d]) / N)
         else:
-            centroid[d, 0] = np.sum(y) / N
+            centroid = centroid.at[d, 0].set(jnp.sum(y) / N)
     diff = z - centroid
     cov = diff.dot(diff.conj().T)
-    s, V = np.linalg.eigh(cov)
+    s, V = jnp.linalg.eigh(cov)
     n = V[:, 0].conj()  # defines normal to the plane
-    theta = np.zeros(D + 1, dtype=y.dtype)
+    theta = jnp.zeros(D + 1, dtype=y.dtype)
     for d in range(D + 1):
         if d < D:
-            theta[d] = -n[d] / n[-1]
+            theta = theta.at[d].set(-n[d] / n[-1])
         else:
             # we need to take the mean here because y can be noisy
             # i.e. we do not have a point exactly in the plane
-            theta[d] = np.mean(n[None, 0:-1].dot(x) / n[-1] + y)
+            theta = theta.at[d].set(jnp.mean(n[None, 0:-1].dot(x) / n[-1] + y))
     return theta
 
 
-def kron_mv(Ls, z):
+def kron_mv(Ls : tuple, z : jnp.ndarray) -> jnp.ndarray:
     """
     Generalized Kronecker matvec for JAX, matching the utils.py kron_matvec logic.
     Ls: list of matrices (e.g. [Lv, Lt])
@@ -63,7 +62,7 @@ def kron_mv(Ls, z):
     return x.reshape(z.shape)
 
 
-def rbf_kernel(grid, lengthscale, variance=1.0):
+def rbf_kernel(grid : jnp.ndarray, lengthscale: float, variance: float=1.0) -> jnp.ndarray:
     """
     RBF kernel K_ij = variance * exp(-0.5 * (xi - xj)^2 / lengthscale^2)
     """
@@ -109,7 +108,7 @@ class Mask:
         return self.adjoint(y_obs).reshape(self.shape)
 
 
-def make_A_matvec(Ls, mask, prec_flat):
+def make_A_matvec(Ls : tuple, mask : Mask, prec_flat : jnp.ndarray) -> callable:
     """
     Returns a function A_matvec(z) that computes
       (I + Lᵀ Rᵀ diag(prec_flat) R L) z
@@ -185,7 +184,7 @@ def gpr_smooth(
     prec_obs = R.forward(prec_flat)  # observed precisions
 
     # Σ = diag(1/prec_flat)  ⇒  σ_obs = 1/√prec_obs
-    sigma_obs = 1.0 / jnp.sqrt(np.where(prec_obs == 0, 1, prec_obs))
+    sigma_obs = 1.0 / jnp.sqrt(jnp.where(prec_obs == 0, 1, prec_obs))
 
     y_white = y_obs * prec_obs  # whitened observations
     RT_Sinv_y = R.adjoint(y_white)  # back to full grid
@@ -197,7 +196,8 @@ def gpr_smooth(
     # LᵀL = K so then we can compute Cholesky factors
     Lt = cholesky(Kt + jitter * jnp.eye(Nt, dtype=jnp.float64), lower=True)
     Lv = cholesky(Kv + jitter * jnp.eye(Nv, dtype=jnp.float64), lower=True)
-    Ls = [Lv, Lt]
+    Ls = (Lv, Lt)
+    Ls_T = tuple(A.T for A in Ls)
 
     # (I + Lᵀ Rᵀ Σ⁻¹ R L) * Eta = Lᵀ Rᵀ Σ⁻¹ * data
     # A * Eta = b:
@@ -206,7 +206,7 @@ def gpr_smooth(
     A_matvec = make_A_matvec(Ls, R, prec_flat)
 
     # b = kron_mv([A.T for A in Ls[::-1]], RT_Sinv_y)
-    b = kron_mv([A.T for A in Ls], RT_Sinv_y)
+    b = kron_mv(Ls_T, RT_Sinv_y)
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
     z0 = jnp.zeros(Nv * Nt, dtype=jnp.float64)
@@ -219,7 +219,14 @@ def gpr_smooth(
     # and reshape to the original image shape
     x_map = x_map_flat.reshape(Nv, Nt)
 
-    def sample_latent(key):
+    def sample_latent(key : jax.random.PRNGKey) -> jnp.ndarray:
+        """
+        Sample from the latent distribution:
+            ξ ∼ N(0, A⁻¹)
+        by solving A ξ = φ where φ = ψ + η
+        with ψ = Lᵀ Rᵀ ε_obs, ε_obs ∼ N(0, σ_obs²)
+        and η ∼ N(0, I)
+        """
         # split for noise vs η
         key_n, key_eta = jax.random.split(key)
 
@@ -247,7 +254,7 @@ def gpr_smooth(
     keys = jax.random.split(jax.random.PRNGKey(0), nof_weight_samples)
 
     # draw all latent samples
-    xis = jnp.stack([sample_latent(k) for k in keys], axis=0)
+    xis = jax.vmap(sample_latent, in_axes=(0,))(keys)
     x_n = jax.vmap(lambda xi: kron_mv(Ls, xi))(
         xis
     )  # for each sample, map xi through L to get sample in original space

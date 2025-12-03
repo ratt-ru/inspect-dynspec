@@ -21,8 +21,7 @@ import glob
 from omegaconf import OmegaConf
 from . import LOGGER, set_console_logging_level
 from art import text2art
-from .gpr_smooth import gpr_smooth
-from .gpr_smooth_hetero import gpr_smooth_heteroscedastic, fit_hyperplane
+from .gpr_smooth import gpr_smooth, fit_hyperplane
 
 
 def convert_tuple_to_list_of_lists(input_tuple):
