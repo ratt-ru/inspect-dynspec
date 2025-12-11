@@ -191,7 +191,7 @@ def gpr_smooth(
 
     # Define the covariance kernels for nu and t:
     Kt = rbf_kernel(t_grid, lengthscale=l_length_t, variance=sigma2)
-    Kv = rbf_kernel(v_grid, lengthscale=l_length_nu, variance=sigma2)
+    Kv = rbf_kernel(v_grid, lengthscale=l_length_nu, variance=1.0)
 
     # LᵀL = K so then we can compute Cholesky factors
     Lt = cholesky(Kt + jitter * jnp.eye(Nt, dtype=jnp.float64), lower=True)
