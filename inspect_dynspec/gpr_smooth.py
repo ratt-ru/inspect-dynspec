@@ -93,19 +93,13 @@ class Mask:
     def adjoint(self, y_obs: jnp.ndarray) -> jnp.ndarray:
         """
         R_T @ y_obs: scatter residuals back into full image.
-        Returns array of shape (nx * ny,), which you can reshape to (nx, ny).
+        Returns array of shape (nx, ny,).
         """
         # start with zeros in flattened space
         full = jnp.zeros(self.mask_flat.shape)
         # scatter observed values back
         full = full.at[self.mask_flat].set(y_obs)
-        return full  # still flattened
-
-    def adjoint_image(self, y_obs: jnp.ndarray) -> jnp.ndarray:
-        """
-        Convenience: same as adjoint but reshaped to (nx, ny).
-        """
-        return self.adjoint(y_obs).reshape(self.shape)
+        return full.reshape(self.shape)
 
 
 def make_A_matvec(Ls : tuple, mask : Mask, prec_flat : jnp.ndarray) -> callable:
@@ -127,7 +121,7 @@ def make_A_matvec(Ls : tuple, mask : Mask, prec_flat : jnp.ndarray) -> callable:
         Sinv_Rx = Rx * prec_obs
         # 4) Rᵀ (Σ⁻¹ Rx)
         RT_Sinv_Rx = mask.adjoint(Sinv_Rx)
-        # 5) Lᵀ term: kron_mv([A.T for A in Ls[::-1]], RT_Sinv_Rx)
+        # 5) Lᵀ term:
         LT_term = kron_mv([A.T for A in Ls], RT_Sinv_Rx)
         # 6) Return (I + …) z
         return z + LT_term
@@ -181,13 +175,13 @@ def gpr_smooth(
     prec_flat = weights.ravel()
 
     y_obs = R.forward(data_flat)  # observed data
-    prec_obs = R.forward(prec_flat)  # observed precisions
+    prec_obs = R.forward(prec_flat)  # observed precisions - should have no entities with zero weight
 
     # Σ = diag(1/prec_flat)  ⇒  σ_obs = 1/√prec_obs
-    sigma_obs = 1.0 / jnp.sqrt(jnp.where(prec_obs == 0, 1, prec_obs))
+    sigma_obs = 1.0 / jnp.sqrt(prec_obs)
 
-    y_white = y_obs * prec_obs  # whitened observations
-    RT_Sinv_y = R.adjoint(y_white)  # back to full grid
+    y_weighted = y_obs * prec_obs  # weighted observations
+    RT_Sinv_y = R.adjoint(y_weighted)  # back to full grid
 
     # Define the covariance kernels for nu and t:
     Kt = rbf_kernel(t_grid, lengthscale=l_length_t, variance=sigma2)
@@ -205,7 +199,6 @@ def gpr_smooth(
     # However now Σ⁻¹ = diag(prec_flat) here (heteroscedastic noise),
     A_matvec = make_A_matvec(Ls, R, prec_flat)
 
-    # b = kron_mv([A.T for A in Ls[::-1]], RT_Sinv_y)
     b = kron_mv(Ls_T, RT_Sinv_y)
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
