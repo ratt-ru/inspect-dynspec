@@ -171,11 +171,8 @@ def gpr_smooth(
 
     weights = jnp.ones_like(data) if weights is None else weights
 
-    data_flat = data.ravel()
-    prec_flat = weights.ravel()
-
-    y_obs = R.forward(data_flat)  # observed data
-    prec_obs = R.forward(prec_flat)  # observed precisions - should have no entities with zero weight
+    y_obs = R.forward(data)  # observed data
+    prec_obs = R.forward(weights)  # observed precisions - should have no entities with zero weight
 
     # Σ = diag(1/prec_flat)  ⇒  σ_obs = 1/√prec_obs
     sigma_obs = 1.0 / jnp.sqrt(prec_obs)
@@ -197,12 +194,12 @@ def gpr_smooth(
     # A * Eta = b:
     # A = (I + Lᵀ Rᵀ Σ⁻¹ R L) is the operator we want to apply
     # However now Σ⁻¹ = diag(prec_flat) here (heteroscedastic noise),
-    A_matvec = make_A_matvec(Ls, R, prec_flat)
+    A_matvec = make_A_matvec(Ls, R, weights)
 
     b = kron_mv(Ls_T, RT_Sinv_y)
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
-    z0 = jnp.zeros(Nv * Nt, dtype=jnp.float64)
+    z0 = jnp.zeros((Nv, Nt), dtype=jnp.float64)
     Eta_map, info = cg(A_matvec, b, x0=z0, tol=cg_tol, maxiter=cg_maxiter)
     if info != 0:
         print("Jax CG result, info =", info)
@@ -233,7 +230,7 @@ def gpr_smooth(
         psi = kron_mv([A.T for A in Ls], n_full)
 
         # 4) η ∼ N(0, I) in latent space
-        eta = jax.random.normal(key_eta, shape=(Nv * Nt,))
+        eta = jax.random.normal(key_eta, shape=(Nv, Nt))
 
         # 5) φ = ψ + η
         phi = psi + eta
