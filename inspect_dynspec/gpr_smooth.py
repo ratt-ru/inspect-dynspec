@@ -140,23 +140,23 @@ def gpr_smooth(
     sigma2: float = 1.0,
     jitter: float = 1e-6,
     cg_tol: float = 1e-6,
-    cg_maxiter: int = 200,
+    cg_maxiter: Optional[int] = None,
     nof_weight_samples: int = 20,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     2D Gaussian‐Process smoothing via an RBF kernel with optional heteroscedastic noise.
 
     Args:
-      data     : float[H, W]  — observed brightness.
-      mask     : float[H, W]  — per-pixel mask (1 for valid pixels, 0 for invalid).
-      weights  : float[H, W]  — per-pixel noise-precision (1/sigma^2). If None, uniform weights are used.
-      l_length_nu : float     — RBF length-scale for frequency axis.
-      l_length_t : float      — RBF length-scale for time axis.
-      sigma2   : float        — RBF signal variance sigma^2.
-      jitter   : float        — small value added to diagonal for numerical stability.
-      cg_tol   : float        — CG solver tolerance.
-      cg_maxiter: int         — maximum number of CG iterations.
-      nof_weight_samples: int — number of latent samples to estimate posterior variance.
+      data     : float[H, W]            — observed brightness.
+      mask     : float[H, W]            — per-pixel mask (1 for valid pixels, 0 for invalid).
+      weights  : float[H, W]            — per-pixel noise-precision (1/sigma^2). If None, uniform weights are used.
+      l_length_nu : float               — RBF length-scale for frequency axis.
+      l_length_t : float                — RBF length-scale for time axis.
+      sigma2   : float                  — RBF signal variance sigma^2.
+      jitter   : float                  — small value added to diagonal for numerical stability.
+      cg_tol   : float                  — CG solver tolerance.
+      cg_maxiter: Optional[int]         — maximum number of CG iterations.
+      nof_weight_samples: int           — number of latent samples to estimate posterior variance.
 
     Returns:
       float[H, W] — posterior mean (“smoothed”) image.
@@ -200,7 +200,7 @@ def gpr_smooth(
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
     z0 = jnp.zeros((Nv, Nt), dtype=jnp.float64)
-    Eta_map, info = cg(A_matvec, b, x0=z0, tol=cg_tol, maxiter=cg_maxiter)
+    Eta_map, info = cg(A_matvec, b, x0=z0, tol=cg_tol, atol=1e-5, maxiter=cg_maxiter)
     if info != 0:
         print("Jax CG result, info =", info)
 
