@@ -1,7 +1,6 @@
 import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import cholesky
-from jax.scipy.sparse.linalg import cg
 
 jax.config.update("jax_enable_x64", True)
 from typing import Optional, Tuple
@@ -45,6 +44,69 @@ def fit_hyperplane(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
             theta = theta.at[d].set(jnp.mean(n[None, 0:-1].dot(x) / n[-1] + y))
     return theta
 
+def custom_cg(
+    A, 
+    b, 
+    x0=None, 
+    tol=1e-1, 
+    atol=0.0, 
+    maxiter=None,
+    print_rate=50
+):
+    """
+    JAX CG solver with runtime debug printing.
+    """
+    if x0 is None:
+        x0 = jnp.zeros_like(b)
+    if maxiter is None:
+        maxiter = min(10 * b.size, 20000)
+
+    r0 = b - A(x0)
+    p0 = r0
+    gamma0 = jnp.vdot(r0, r0).real
+    b_norm_sq = jnp.vdot(b, b).real
+    
+    tol_sq = jnp.maximum(tol**2 * b_norm_sq, atol**2)
+    jax.debug.print("CG Init: |b|^2={b}, Target Residual^2={t}, MaxIter={m}", 
+                    b=b_norm_sq, t=tol_sq, m=maxiter)
+    init_state = (x0, r0, p0, gamma0, 0)
+
+    def cond_fun(state):
+        _, _, _, gamma, k = state
+        return (gamma > tol_sq) & (k < maxiter)
+
+    def body_fun(state):
+        x, r, p, gamma, k = state
+        
+        Ap = A(p)
+        alpha = gamma / jnp.vdot(p, Ap).real
+        x_new = x + alpha * p
+        r_new = r - alpha * Ap
+        
+        gamma_new = jnp.vdot(r_new, r_new).real
+        beta = gamma_new / gamma
+        p_new = r_new + beta * p
+
+        delta_1 = jnp.vdot(r,r) / jnp.vdot(r0,r0)
+        x_diff = x_new - x
+        delta_2 = jnp.vdot(x_diff,x_diff) / jnp.vdot(x_new,x_new)
+        
+        def do_print():
+            jax.debug.print("Iter {k}: Residual^2 = {g}, delta_1 = {delta_1}, delta_2 = {delta_2}", k=k, g=gamma_new, delta_1 = delta_1, delta_2 = delta_2)
+            return None
+        jax.lax.cond(k % print_rate == 0, do_print, lambda: None)
+        
+        return (x_new, r_new, p_new, gamma_new, k + 1)
+    final_state = jax.lax.while_loop(cond_fun, body_fun, init_state)
+    
+    x_final, _, _, gamma_final, k_final = final_state
+    converged = gamma_final <= tol_sq
+    jax.debug.print("CG Finished: Iter {k}, Final Resid^2 {g}, Converged? {c}", 
+                    k=k_final, g=gamma_final, c=converged)
+
+    info = jnp.where(converged, 0, 1)
+    
+    return x_final, info
 
 def kron_mv(Ls : tuple, z : jnp.ndarray) -> jnp.ndarray:
     """
@@ -128,6 +190,34 @@ def make_A_matvec(Ls : tuple, mask : Mask, prec_flat : jnp.ndarray) -> callable:
 
     return A_matvec
 
+def test_forward_backward(R : Mask, Ls : Tuple) -> None:
+
+    key = jax.random.PRNGKey(31)
+    k1, k2 = jax.random.split(key,2)
+
+    Nv, Nt = R.shape
+    n_obs = R.n_obs
+
+    x = jax.random.normal(k1, (Nv, Nt)) # has shape of data "latent space"
+    y = jax.random.normal(k2, (n_obs,)) # has length of "data space" (unmasked values)
+
+    Lx = kron_mv(Ls, x)
+    Rx = R.forward(Lx)
+
+    Ls_T = [A.T for A in Ls]
+    RTy = R.adjoint(y)
+    LTRTy = kron_mv(Ls_T, RTy)
+
+    y1 = jnp.vdot(y,Rx)
+    x2 = jnp.vdot(x,LTRTy)
+
+    diff = jnp.abs(y1 - x2)
+
+    if diff <= 1e-10:
+        jax.debug.print(f"got diff: {diff}, passed")
+    else:
+        jax.debug.print(f"got diff: {diff}, failed")
+
 
 def gpr_smooth(
     data: jnp.ndarray,  # shape (Nv, Nt)
@@ -142,6 +232,7 @@ def gpr_smooth(
     cg_tol: float = 1e-6,
     cg_maxiter: Optional[int] = None,
     nof_weight_samples: int = 20,
+    test : bool = False,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     2D Gaussian‐Process smoothing via an RBF kernel with optional heteroscedastic noise.
@@ -190,6 +281,9 @@ def gpr_smooth(
     Ls = (Lv, Lt)
     Ls_T = tuple(A.T for A in Ls)
 
+    if test:
+        test_forward_backward(R,Ls)
+
     # (I + Lᵀ Rᵀ Σ⁻¹ R L) * Eta = Lᵀ Rᵀ Σ⁻¹ * data
     # A * Eta = b:
     # A = (I + Lᵀ Rᵀ Σ⁻¹ R L) is the operator we want to apply
@@ -200,7 +294,7 @@ def gpr_smooth(
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
     z0 = jnp.zeros((Nv, Nt), dtype=jnp.float64)
-    Eta_map, info = cg(A_matvec, b, x0=z0, tol=cg_tol, atol=1e-5, maxiter=cg_maxiter)
+    Eta_map, info = custom_cg(A_matvec, b, x0=z0, tol=cg_tol, maxiter=cg_maxiter)
     if info != 0:
         print("Jax CG result, info =", info)
 
@@ -236,7 +330,7 @@ def gpr_smooth(
         phi = psi + eta
 
         # 6) solve A ξ = φ by CG
-        xi, _ = cg(A_matvec, phi, tol=cg_tol, maxiter=cg_maxiter)
+        xi, _ = custom_cg(A_matvec, phi, tol=cg_tol, maxiter=cg_maxiter)
 
         return xi
 
