@@ -49,13 +49,10 @@ def custom_cg(
     b, 
     x0=None, 
     tol=1e-1, 
-    atol=0.0, 
     maxiter=None,
+    patience=10, # Number of times delta_2 < tol**2 to stop
     print_rate=50
 ):
-    """
-    JAX CG solver with runtime debug printing.
-    """
     if x0 is None:
         x0 = jnp.zeros_like(b)
     if maxiter is None:
@@ -64,49 +61,56 @@ def custom_cg(
     r0 = b - A(x0)
     p0 = r0
     gamma0 = jnp.vdot(r0, r0).real
-    b_norm_sq = jnp.vdot(b, b).real
     
-    tol_sq = jnp.maximum(tol**2 * b_norm_sq, atol**2)
-    jax.debug.print("CG Init: |b|^2={b}, Target Residual^2={t}, MaxIter={m}", 
-                    b=b_norm_sq, t=tol_sq, m=maxiter)
-    init_state = (x0, r0, p0, gamma0, 0)
+    # state: (x, r, p, gamma, k, delta_2, counter)
+    init_state = (x0, r0, p0, gamma0, 0, 1.0, 0)
 
     def cond_fun(state):
-        _, _, _, gamma, k = state
-        return (gamma > tol_sq) & (k < maxiter)
+        _, _, _, _, k, _, count = state
+        # Continue if we haven't hit maxiter AND haven't hit our patience limit
+        return (k < maxiter) & (count < patience)
 
     def body_fun(state):
-        x, r, p, gamma, k = state
+        x, r, p, gamma, k, _, count = state
         
         Ap = A(p)
-        alpha = gamma / jnp.vdot(p, Ap).real
+        alpha = gamma / (jnp.vdot(p, Ap).real + 1e-15)
         x_new = x + alpha * p
         r_new = r - alpha * Ap
         
         gamma_new = jnp.vdot(r_new, r_new).real
-        beta = gamma_new / gamma
+        beta = gamma_new / (gamma + 1e-15)
         p_new = r_new + beta * p
 
-        delta_1 = jnp.vdot(r,r) / jnp.vdot(r0,r0)
+        # Calculate squared relative step change
         x_diff = x_new - x
-        delta_2 = jnp.vdot(x_diff,x_diff) / jnp.vdot(x_new,x_new)
+        delta_2 = jnp.vdot(x_diff, x_diff).real / (jnp.vdot(x_new, x_new).real + 1e-15)
+        
+        # Increment counter if delta_2 is below tolerance, else reset it to 0
+        new_count = jnp.where(delta_2 < tol**2, count + 1, 0)
         
         def do_print():
-            jax.debug.print("Iter {k}: Residual^2 = {g}, delta_1 = {delta_1}, delta_2 = {delta_2}", k=k, g=gamma_new, delta_1 = delta_1, delta_2 = delta_2)
-            return None
+            jax.debug.print(
+                "Iter {k}: Resid^2={g}, delta_2={d}, Patience={c}/{p}", 
+                k=k, g=gamma_new, d=delta_2, c=new_count, p=patience
+            )
         jax.lax.cond(k % print_rate == 0, do_print, lambda: None)
         
-        return (x_new, r_new, p_new, gamma_new, k + 1)
+        return (x_new, r_new, p_new, gamma_new, k + 1, delta_2, new_count)
+
     final_state = jax.lax.while_loop(cond_fun, body_fun, init_state)
     
-    x_final, _, _, gamma_final, k_final = final_state
-    converged = gamma_final <= tol_sq
-    jax.debug.print("CG Finished: Iter {k}, Final Resid^2 {g}, Converged? {c}", 
-                    k=k_final, g=gamma_final, c=converged)
-
-    info = jnp.where(converged, 0, 1)
+    x_final, _, _, gamma_final, k_final, _, count_final = final_state
     
-    return x_final, info
+    # We consider it converged if the patience counter was the reason we stopped
+    converged = count_final >= patience
+    
+    jax.debug.print(
+        "CG Finished: Iter {k}, Final Resid^2 {g}, Stagnated? {c}", 
+        k=k_final, g=gamma_final, c=converged
+    )
+
+    return x_final
 
 def kron_mv(Ls : tuple, z : jnp.ndarray) -> jnp.ndarray:
     """
@@ -230,6 +234,7 @@ def gpr_smooth(
     sigma2: float = 1.0,
     jitter: float = 1e-6,
     cg_tol: float = 1e-6,
+    cg_patience: int = 5,
     cg_maxiter: Optional[int] = None,
     nof_weight_samples: int = 20,
     test : bool = False,
@@ -238,20 +243,22 @@ def gpr_smooth(
     2D Gaussian‐Process smoothing via an RBF kernel with optional heteroscedastic noise.
 
     Args:
-      data     : float[H, W]            — observed brightness.
-      mask     : float[H, W]            — per-pixel mask (1 for valid pixels, 0 for invalid).
-      weights  : float[H, W]            — per-pixel noise-precision (1/sigma^2). If None, uniform weights are used.
+      data     : float[Nv, Nt]            — observed brightness.
+      mask     : float[Nv, Nt]            — per-pixel mask (1 for valid pixels, 0 for invalid).
+      weights  : float[Nv, Nt]            — per-pixel noise-precision (1/sigma^2). If None, uniform weights are used.
       l_length_nu : float               — RBF length-scale for frequency axis.
       l_length_t : float                — RBF length-scale for time axis.
       sigma2   : float                  — RBF signal variance sigma^2.
       jitter   : float                  — small value added to diagonal for numerical stability.
       cg_tol   : float                  — CG solver tolerance.
+      cg_patience : int                 — Number of times that the cg step may be smaller than the tolerance in a row
       cg_maxiter: Optional[int]         — maximum number of CG iterations.
       nof_weight_samples: int           — number of latent samples to estimate posterior variance.
+      test: bool                        — if True, returns additional intermediate values for testing purposes.
 
     Returns:
-      float[H, W] — posterior mean (“smoothed”) image.
-      float[H, W] — posterior variance image.
+      float[Nv, Nt] — posterior mean (“smoothed”) image.
+      float[Nsamp, Nv, Nt] — posterior samples in the original space, used to estimate variance. Nsamp = nof_weight_samples.
     """
 
     # Prep:
@@ -294,9 +301,7 @@ def gpr_smooth(
 
     # Conjugate gradient solver for Ax = b -> |Ax - b| < tol
     z0 = jnp.zeros((Nv, Nt), dtype=jnp.float64)
-    Eta_map, info = custom_cg(A_matvec, b, x0=z0, tol=cg_tol, maxiter=cg_maxiter)
-    if info != 0:
-        print("Jax CG result, info =", info)
+    Eta_map = custom_cg(A_matvec, b, x0=z0, tol=cg_tol, patience=cg_patience, maxiter=cg_maxiter)
 
     # finally we just need to compute x = kron_mv(Ls, Eta_map)
     x_map_flat = kron_mv(Ls, Eta_map)
@@ -330,7 +335,7 @@ def gpr_smooth(
         phi = psi + eta
 
         # 6) solve A ξ = φ by CG
-        xi, _ = custom_cg(A_matvec, phi, tol=cg_tol, maxiter=cg_maxiter)
+        xi = custom_cg(A_matvec, phi, tol=cg_tol, patience=cg_patience, maxiter=cg_maxiter)
 
         return xi
 
@@ -343,8 +348,5 @@ def gpr_smooth(
         xis
     )  # for each sample, map xi through L to get sample in original space
 
-    var_x = jnp.var(x_n, axis=0).reshape(
-        Nv, Nt
-    )  # compute var across nof_weight_samples
-
-    return x_map, var_x, xis
+    return x_map, x_n
+    

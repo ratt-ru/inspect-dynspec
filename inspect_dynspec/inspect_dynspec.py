@@ -906,6 +906,77 @@ def plot_smoothed_data(
     plt.close()
     return None
 
+def plot_light_curve_with_errors(
+    mean_lc: np.ndarray,
+    var_lc: np.ndarray,
+    t_slice: slice,
+    header: fits.header.Header,
+    output: str,
+    dpi: int = 300,
+    title: str = "",
+    cbar_label: str = "mJy", # Used for y-axis label and formatting
+    figsize: tuple = (12, 5),
+    colour: str = "royalblue",
+    return_plot: bool = False,
+) -> Optional[plt.Axes]:
+    """
+    Args:
+        mean_lc: 1D array of mean light curve values
+        var_lc: 1D array of variance of the light curve values
+        t_slice: Slice of the time range to consider
+        header: FITS header
+        output: Plot filename
+        header: FITS header
+        dpi: DPI of the output plots
+        title: Title to add to the plot
+        cbar_label: Label for the colour
+        figsize: Size of the figure
+        colour: The lightcurve colour to use
+        return_plot: Whether to return the Axes object for external plotting
+    Returns:
+        Optionally returns Axes object for external plotting.
+    """
+    t_ticks = fetch_t_ticks_mjd(header)[t_slice]
+    times = [t.to_datetime() for t in t_ticks]
+    
+    std_lc = np.sqrt(var_lc)
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    with time_support(simplify=True):
+        ax.plot(times, mean_lc, color=colour, lw=1.5, label='Mean Flux')
+        
+        ax.fill_between(
+            times, 
+            mean_lc - std_lc, 
+            mean_lc + std_lc, 
+            color=colour, 
+            alpha=0.3, 
+            label=r'1$\sigma$ Uncertainty'
+        )
+
+        if cbar_label == "mJy":
+            ax.yaxis.set_major_formatter(FuncFormatter(format_func))
+        ax.set_ylabel(cbar_label)
+        
+        locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
+        formatter = mdates.ConciseDateFormatter(locator)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+        ax.set_xlabel("Time (UTC)")
+
+    ax.set_title(title)
+    ax.legend(loc='upper right')
+    ax.grid(True, linestyle='--', alpha=0.4)
+
+    plt.savefig(output, dpi=dpi, bbox_inches="tight")
+    
+    if return_plot:
+        return ax
+    
+    plt.close()
+    return None
+
 
 def plot_denoising_progression(
     target_data: np.ndarray,
