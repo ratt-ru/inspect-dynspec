@@ -944,7 +944,7 @@ def plot_light_curve_with_errors(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
     with time_support(simplify=True):
-        ax.plot(times, mean_lc, color=colour, lw=1.5, label='Mean Flux')
+        ax.plot(times, mean_lc, color=colour, lw=0.75, label='Mean Flux')
         
         ax.fill_between(
             times, 
