@@ -1457,7 +1457,7 @@ def get_refval_and_axisvals(hdr: fits.header.Header, axis: int = 3) -> tuple:
 
 def extract_identifier(filename):
     match = re.search(
-        r"(\d{2}:\d{2}:\d{2}\.\d{3}_-?\d{2}:\d{2}:\d{2}\.\d{3})", filename
+        r"(\d{2}:\d{2}:\d{2}\.\d{3}_[+-]\d{2}:\d{2}:\d{2}\.\d{3})", filename
     )
     return match.group(1) if match else None
 
