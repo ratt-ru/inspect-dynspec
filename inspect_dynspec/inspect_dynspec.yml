@@ -58,6 +58,10 @@ cabs:
         dtype: bool
         info: "Plot the data in a format suitable for publication"
         default: false
+      zero-vcenter:
+        dtype: bool
+        info: "Set vcenter to zero instead of the mean of the data"
+        default: false
       dpi:
         dtype: int
         info: "DPI of the output plots. Default 300."
@@ -85,6 +89,10 @@ cabs:
         dtype: bool
         info: "Enable verbose console output"
         default: false
+      use-gpr:
+        dtype: Tuple[float, float, int, Optional[int], int] # (jitter, cg_tolerance, cg_patience, cg_maxiter, nof_weight_samples)
+        info: "Use Gaussian Process Regression (GPR) smoothing instead of standard convolution."
+        required: false
 
     outputs:
       output:

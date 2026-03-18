@@ -1,7 +1,7 @@
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 import matplotlib.dates as mdates
 from scabha.schema_utils import clickify_parameters
-from typing import Optional
+from typing import Optional, Tuple
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.axes import Axes
@@ -47,6 +47,16 @@ def find_valid_root(input: str) -> str:
         f"No directory containing {required_dirs} found under {input}"
     )
 
+def determine_vminmaxcenter(data : np.ndarray, std_scale: float, zero_vcenter) -> Tuple[Tuple[float,float],float]:
+    if np.isnan(data).any():
+        vmin = -std_scale * np.nanstd(data)
+        vmax = std_scale * np.nanstd(data)
+        vcenter = 0.0 if zero_vcenter else np.nanmean(data)
+    else:
+        vmin = -std_scale * np.std(data)
+        vmax = std_scale * np.std(data)
+        vcenter = 0.0 if zero_vcenter else np.mean(data)
+    return (vmin, vmax), vcenter
 
 schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspec.yml"))
 
@@ -65,12 +75,14 @@ def inspect_dynspec(
     std_scale: float,
     debug: bool,
     plot_for_paper: bool,
+    zero_vcenter: bool,
     calc_circular_pol: bool,
     calc_linear_pol: bool,
     zero_sub_value_tolerance: float,
     cmap: str,
     dpi: int,
     verbose: bool,
+    use_gpr: tuple, #(jitter, cg_tolerance, cg_patience, cg_maxiter, nof_weight_samples)
 ) -> None:
 
     script_name = text2art("Inspect Dynspec")
@@ -379,200 +391,229 @@ def inspect_dynspec(
             """
             ################### SMOOTHING TO FURTHER REDUCE NOISE ##############################
             """
-            # smoothed_target_data_var_normalised is sdata
-            conv_target_data_var_normalised, cwgt = convolve(
-                target_data_var_normalised,
-                wgt,
-                target_header,
-                nu_delta,
-                t_delta,
-                nu_slice,
-                t_slice,
-                mask,
-                n_threads,
-            )
-            cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
-            smoothed_target_data_var_normalised = (
-                conv_target_data_var_normalised / cwgt_nonzero
-            )
-            sstd = (1 / np.sqrt(cwgt_nonzero)) * mask
-            sSNR = smoothed_target_data_var_normalised * np.sqrt(
-                cwgt
-            )  # i.e sSNR = sdata / sstd = sdata * sqrt(wgt)
+            if use_gpr:
+                for stx_idx, stx in enumerate(stokes_slice):
+                    stx_str = "IQUV"[stx]
 
-            if debug:
-                # smooth target data
-                conv_target_data, _ = convolve(
-                    target_data,
-                    np.ones(target_data[0, :, :].shape),
-                    target_header,
-                    nu_delta,
-                    t_delta,
-                    nu_slice,
-                    t_slice,
-                    mask,
-                    n_threads,
-                )
-                smoothed_target_data = conv_target_data
+                    # Here we smooth the target data A.10 and sample the noise. This lets us produce SNR and Jy products
+                    phys_time, delta_time = get_refval_and_axisvals(target_header, axis=1)
+                    phys_time -= phys_time.min()
+                    phys_time /= 3600  # sec to hr
+                    phys_freq, delta_freq = get_refval_and_axisvals(target_header, axis=2)
+                    phys_time = phys_time[t_slice]
+                    phys_freq = phys_freq[nu_slice]
+                    nu = phys_freq - phys_freq[0]
+                    lnu = nu_delta / nu.max()
+                    nu /= nu.max()
+                    t = phys_time - phys_time[0]
+                    lt = t_delta / t.max() / 3600
+                    t /= t.max()
 
-                # smooth target data analytically denoised
-                conv_target_data_a_whitened, cwgt_white = convolve(
-                    target_data_a_whitened,
-                    (1 / np.sqrt(np.where(var_a == 0, 1, var_a))) * mask,
-                    target_header,
-                    nu_delta,
-                    t_delta,
-                    nu_slice,
-                    t_slice,
-                    mask,
-                    n_threads,
-                )
-                smoothed_target_data_a_denoised = (
-                    conv_target_data_a_whitened
-                    / np.where(cwgt_white == 0, 1, cwgt_white)
-                )
+                    #Calculate a mean plane:
+                    mask_bool = mask.astype(bool)
+                    mask_nan = np.where(mask_bool, 1, np.nan)
+                    rows, cols = np.nonzero(mask)
+                    X = np.vstack((rows, cols))
 
-            for stx_idx, stx in enumerate(stokes_slice):
-                stx_str = "IQUV"[stx]
+                    data_flat = target_data[stx_idx,:,:].ravel()
+                    Y = data_flat[mask_bool.ravel()]
+                    theta = fit_hyperplane(X, Y)
+                    Nv, Nt = mask_bool.shape
+                    trend_flat = theta[0]*np.repeat(np.arange(Nv), Nt) + theta[1]*np.tile(np.arange(Nt), Nv) + theta[2]
+                    trend     = trend_flat.reshape(Nv, Nt)
+                    target_data_detrended = target_data - trend
+                    sigma2 = np.var(target_data_detrended)
 
-                sdata_title = (
-                    ""
-                    if plot_for_paper
-                    else f"Analytically and excess denoised, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
-                )
-                sdata_plot_name = os.path.join(
-                    output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_e_denoise.png",
-                )
-                vminmax = (
-                    -std_scale
-                    * np.std(smoothed_target_data_var_normalised[stx_idx, :, :]),
-                    std_scale
-                    * np.std(smoothed_target_data_var_normalised[stx_idx, :, :]),
-                )
-                plot_smoothed_data(
-                    smoothed_target_data_var_normalised[stx_idx, :, :],
-                    nu_slice,
-                    t_slice,
-                    nu_delta,
-                    t_delta,
-                    output=sdata_plot_name,
-                    header=target_header,
-                    vminmax=vminmax,
-                    vcenter=0,
-                    dpi=dpi,
-                    cmap=cmap,
-                    title=sdata_title,
-                    cbar_label="mJy",
-                    figsize=figsize,
-                    return_plot=False,
-                )
-                LOGGER.info(
-                    f"Wrote sdata smoothed plot for stokes {stx_str} to {sdata_plot_name}"
-                )
+                    x_map, x_n = gpr_smooth(
+                        target_data_detrended[stx_idx, :, :],
+                        mask_bool,
+                        wgt,
+                        lnu,
+                        lt,
+                        sigma2,
+                        jitter = use_gpr[0],
+                        cg_tol = use_gpr[1],
+                        cg_patience = use_gpr[2],
+                        cg_maxiter = use_gpr[3],
+                        nof_weight_samples = use_gpr[4])
 
-                if debug:
-                    data_raw_title = (
+                    x_map = np.asarray(x_map)
+                    x_n = np.asarray(x_n)
+
+                    x_map = x_map + trend # add back the trend
+                    x_n = x_n + x_map[None, :, :] # add back the trend to each of the samples
+
+                    x_n_var = np.var(x_n, axis=0) * mask_nan #variance of the samples
+                    x_n_std = np.sqrt(x_n_var) #standard deviation of the samples
+                    std_inv_nan = (1 / (x_n_std + 1e-15))  #weights produced from samples
+                    x_map_snr = x_map * std_inv_nan #GPR smoothed SNR map, masking out flagged regions
+
+                    mask_1d = np.where(np.sum(mask, axis=0) > 0, 1.0, np.nan)
+
+                    std_x = np.sqrt(np.var(x_n, axis=0))
+                    std_inv_x = 1 / (std_x + 1e-12)
+                    lc_snr = np.sum(x_map * std_inv_x, axis=0) / Nv #summed x_map/std across freq
+                    lc_n_snr = np.sum(x_n * std_inv_x, axis=1) / Nv #summed x_n/std (samples) across freq
+                    lc_snr_var = np.var(lc_n_snr, axis=0) #take variance
+                    lc_snr_masked = lc_snr * mask_1d
+                    lc_snr_var_masked = lc_snr_var * mask_1d
+
+                    #Jy point:
+                    gprjy_title = (
                         ""
                         if plot_for_paper
-                        else f"raw target, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                     )
-                    data_raw_plot_name = os.path.join(
+                    gprjy_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
                     )
-                    vminmax = (
-                        -std_scale * np.std(smoothed_target_data[stx_idx, :, :]),
-                        std_scale * np.std(smoothed_target_data[stx_idx, :, :]),
-                    )
+                    vminmax, vcenter = determine_vminmaxcenter(x_map, std_scale, zero_vcenter=zero_vcenter)
+                    x_map_nan = x_map * mask_nan
                     plot_smoothed_data(
-                        smoothed_target_data[stx_idx, :, :],
-                        nu_slice,
-                        t_slice,
-                        nu_delta,
-                        t_delta,
-                        output=data_raw_plot_name,
+                        smoothed_data = x_map_nan,
+                        nu_slice=nu_slice,
+                        t_slice=t_slice,
+                        nu_delta = nu_delta,
+                        t_delta = t_delta,
+                        output=gprjy_plotname,
                         header=target_header,
                         vminmax=vminmax,
-                        vcenter=0,
+                        vcenter=vcenter,
                         dpi=dpi,
                         cmap=cmap,
-                        title=data_raw_title,
-                        cbar_label="mJy",
+                        title=gprjy_title,
+                        cbar_label="mJy", # units of mJy
                         figsize=figsize,
-                        return_plot=False,
-                    )
-                    LOGGER.info(
-                        f"Wrote target smoothed plot for stokes {stx_str} to {data_raw_plot_name}"
+                        return_plot=False
                     )
 
-                    data_a_title = (
+                    #SNR plot
+                    gprsnr_title = (
                         ""
                         if plot_for_paper
-                        else f"Analytically denoised target, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
+                        else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                     )
-                    data_a_plot_name = os.path.join(
+                    gprsnr_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_SNR.png",
                     )
-                    vminmax = (
-                        -std_scale
-                        * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
-                        std_scale
-                        * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
-                    )
+                    vminmax,vcenter=determine_vminmaxcenter(x_map_snr, std_scale, zero_vcenter=zero_vcenter)
                     plot_smoothed_data(
-                        smoothed_target_data_a_denoised[stx_idx, :, :],
-                        nu_slice,
-                        t_slice,
-                        nu_delta,
-                        t_delta,
-                        output=data_a_plot_name,
+                        smoothed_data = x_map_snr,
+                        nu_slice=nu_slice,
+                        t_slice=t_slice,
+                        nu_delta = nu_delta,
+                        t_delta = t_delta,
+                        output=gprsnr_plotname,
                         header=target_header,
                         vminmax=vminmax,
-                        vcenter=0,
+                        vcenter=vcenter,
                         dpi=dpi,
                         cmap=cmap,
-                        title=data_a_title,
-                        cbar_label="mJy",
-                        figsize=figsize,
-                        return_plot=False,
-                    )
-                    LOGGER.info(
-                        f"Wrote target smoothed plot for stokes {stx_str} to {data_a_plot_name}"
-                    )
-                    sSNR_title = (
-                        ""
-                        if plot_for_paper
-                        else f"sSNR, stokes {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                    )
-                    sSNR_plot_name = os.path.join(
-                        output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
-                    )
-                    vminmax = (
-                        -std_scale * np.std(sSNR[stx_idx, :, :]),
-                        std_scale * np.std(sSNR[stx_idx, :, :]),
-                    )
-                    plot_smoothed_data(
-                        sSNR[stx_idx, :, :],
-                        nu_slice,
-                        t_slice,
-                        nu_delta,
-                        t_delta,
-                        output=sSNR_plot_name,
-                        header=target_header,
-                        vminmax=vminmax,
-                        vcenter=0,
-                        dpi=dpi,
-                        cmap=cmap,
-                        title=sSNR_title,
+                        title=gprsnr_title,
                         cbar_label="SNR",
                         figsize=figsize,
+                        return_plot=False
+                    )
+                    gprlcsnr_title = (
+                        ""
+                        if plot_for_paper
+                        else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    )
+                    gprlcsnr_plotname = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
+                    )
+                    plot_light_curve_with_errors(
+                        lc_snr_masked,
+                        lc_snr_var_masked,
+                        t_slice,
+                        target_header,
+                        output=gprlcsnr_plotname,
+                        dpi=dpi,
+                        cbar_label="SNR",
+                        title=gprlcsnr_title,
+                        figsize=(12,6),
+                        colour="royalblue")
+                    
+                    if debug:
+                        vminmax, vcenter = determine_vminmaxcenter(x_n_var, std_scale, zero_vcenter=zero_vcenter)
+                        gprvar_title = (
+                            ""
+                            if plot_for_paper
+                            else f"Variance of GPR samples, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                        )
+                        gprvar_plotname = os.path.join(
+                            output_dir,
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_variance.png",
+                        )
+                        plot_dynspec(
+                            data=x_n_var,
+                            output=gprvar_plotname,
+                            header=target_header,
+                            nu_slice=nu_slice,
+                            t_slice=t_slice,
+                            vminmax=vminmax,
+                            vcenter=vcenter,
+                            dpi=dpi,
+                            cmap=cmap,
+                            title=gprvar_title,
+                            cbar_label="mJy", # units of mJy?
+                            figsize=(12,6),
+                            return_plot=False
+                        )
+
+            else:
+                # Here we convolve the data SNR values and then divide by the convolved weights to get smoothed Jy values.
+                conv_target_data_var_normalised, cwgt = convolve(
+                    target_data_var_normalised,
+                    wgt,
+                    target_header,
+                    nu_delta,
+                    t_delta,
+                    nu_slice,
+                    t_slice,
+                    mask,
+                    n_threads,
+                )
+                cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
+                sdata = (
+                    conv_target_data_var_normalised / cwgt_nonzero
+                )
+
+                for stx_idx, stx in enumerate(stokes_slice):
+                    stx_str = "IQUV"[stx]
+
+                    sdata_title = (
+                        ""
+                        if plot_for_paper
+                        else f"Analytically and excess denoised, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    )
+                    sdata_plot_name = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_convolve_Jy.png",
+                    )
+                    vminmax, vcenter = determine_vminmaxcenter(sdata[stx_idx, :, :], std_scale, zero_vcenter=zero_vcenter)
+                    plot_smoothed_data(
+                        sdata[stx_idx, :, :],
+                        nu_slice,
+                        t_slice,
+                        nu_delta,
+                        t_delta,
+                        output=sdata_plot_name,
+                        header=target_header,
+                        vminmax=vminmax,
+                        vcenter=vcenter,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=sdata_title,
+                        cbar_label="mJy",
+                        figsize=figsize,
                         return_plot=False,
                     )
                     LOGGER.info(
-                        f"Wrote sSNR smoothed plot for stokes {stx_str} to {sSNR_plot_name}"
+                        f"Wrote sdata smoothed plot for stokes {stx_str} to {sdata_plot_name}"
                     )
 
 
