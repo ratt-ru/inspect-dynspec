@@ -90,9 +90,36 @@ cabs:
         info: "Enable verbose console output"
         default: false
       use-gpr:
-        dtype: Tuple[float, float, int, Optional[int], int] # (jitter, cg_tolerance, cg_patience, cg_maxiter, nof_weight_samples)
+        dtype: bool
         info: "Use Gaussian Process Regression (GPR) smoothing instead of standard convolution."
         required: false
+      gpr-jitter:
+        dtype: float
+        default: 1e-8
+        info: "Jitter term added to the diagonal of the covariance matrix in GPR to improve numerical stability. Default is 1e-8."
+        required: false
+      gpr-tolerance:
+        dtype: float
+        default: 1e-4
+        info: "Tolerance for the conjugate gradient solver in GPR. Default is 1e-4."
+        required: false
+      gpr-patience:
+        dtype: int
+        default: 3
+        info: "Patience for the conjugate gradient solver in GPR. Default is 3."
+        required: false
+      gpr-maxiter:
+        dtype: int
+        info: "Maximum iterations for the conjugate gradient solver in GPR. Default is None."
+        required: false
+      gpr-samples:
+        dtype: int
+        default: 25
+        info: "Number of samples to use for GPR variance estimate. Default is 25."
+        required: false
+
+
+      
 
     outputs:
       output:

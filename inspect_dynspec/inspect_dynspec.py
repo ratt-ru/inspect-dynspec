@@ -82,7 +82,12 @@ def inspect_dynspec(
     cmap: str,
     dpi: int,
     verbose: bool,
-    use_gpr: tuple, #(jitter, cg_tolerance, cg_patience, cg_maxiter, nof_weight_samples)
+    use_gpr: bool,
+    gpr_jitter: float,
+    gpr_tolerance: float,
+    gpr_patience: int,
+    gpr_maxiter: int,
+    gpr_samples: int,
 ) -> None:
 
     script_name = text2art("Inspect Dynspec")
@@ -431,11 +436,11 @@ def inspect_dynspec(
                         lnu,
                         lt,
                         sigma2,
-                        jitter = use_gpr[0],
-                        cg_tol = use_gpr[1],
-                        cg_patience = use_gpr[2],
-                        cg_maxiter = use_gpr[3],
-                        nof_weight_samples = use_gpr[4])
+                        jitter = gpr_jitter,
+                        cg_tol = gpr_tolerance,
+                        cg_patience = gpr_patience,
+                        cg_maxiter = gpr_maxiter,
+                        nof_weight_samples = gpr_samples)
 
                     x_map = np.asarray(x_map)
                     x_n = np.asarray(x_n)
