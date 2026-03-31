@@ -420,19 +420,20 @@ def inspect_dynspec(
                     rows, cols = np.nonzero(mask)
                     X = np.vstack((rows, cols))
 
-                    data_flat = target_data[stx_idx,:,:].ravel()
+                    gpr_data_to_smooth = target_data[stx_idx, :, :]
+                    data_flat = gpr_data_to_smooth.ravel()
                     Y = data_flat[mask_bool.ravel()]
                     theta = fit_hyperplane(X, Y)
                     Nv, Nt = mask_bool.shape
                     trend_flat = theta[0]*np.repeat(np.arange(Nv), Nt) + theta[1]*np.tile(np.arange(Nt), Nv) + theta[2]
                     trend     = trend_flat.reshape(Nv, Nt)
-                    target_data_detrended = target_data - trend
-                    sigma2 = np.var(target_data_detrended)
+                    target_data_detrended = gpr_data_to_smooth - trend
+                    sigma2 = np.var(target_data_detrended[mask_bool]) #dont use zeros in variance calculation
 
                     x_map, x_n = gpr_smooth(
-                        target_data_detrended[stx_idx, :, :],
+                        target_data_detrended,
                         mask_bool,
-                        wgt,
+                        wgt[stx_idx, :, :],
                         lnu,
                         lt,
                         sigma2,
@@ -473,8 +474,8 @@ def inspect_dynspec(
                         output_dir,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
                     )
-                    vminmax, vcenter = determine_vminmaxcenter(x_map, std_scale, zero_vcenter=zero_vcenter)
                     x_map_nan = x_map * mask_nan
+                    vminmax, vcenter = determine_vminmaxcenter(x_map_nan, std_scale, zero_vcenter=zero_vcenter)
                     plot_smoothed_data(
                         smoothed_data = x_map_nan,
                         nu_slice=nu_slice,
