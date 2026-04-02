@@ -14,6 +14,7 @@ import dask.array as da
 from dask import delayed, compute
 from ducc0.fft import r2c, c2r
 import numpy as np
+import jax.numpy as jnp
 import click
 import os
 import re
@@ -56,7 +57,7 @@ def determine_vminmaxcenter(data : np.ndarray, std_scale: float, zero_vcenter) -
         vmin = -std_scale * np.std(data)
         vmax = std_scale * np.std(data)
         vcenter = 0.0 if zero_vcenter else np.mean(data)
-    return (vmin, vmax), vcenter
+    return (float(vmin), float(vmax)), float(vcenter)
 
 schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspec.yml"))
 
@@ -281,6 +282,7 @@ def inspect_dynspec(
             LOGGER.info("Completed excess denoising.")
         else:
             target_data_var_normalised = target_data_a_whitened.copy()
+            wgt = (1 / np.where(var_a == 0, 1, var_a)) * mask
 
         """
         ################### PLOT DENOISING PROGRESSION #####################################
@@ -431,9 +433,9 @@ def inspect_dynspec(
                     sigma2 = np.var(target_data_detrended[mask_bool]) #dont use zeros in variance calculation
 
                     x_map, x_n = gpr_smooth(
-                        target_data_detrended,
-                        mask_bool,
-                        wgt[stx_idx, :, :],
+                        jnp.asarray(target_data_detrended),
+                        jnp.asarray(mask_bool),
+                        jnp.asarray(wgt[stx_idx, :, :]),
                         lnu,
                         lt,
                         sigma2,
