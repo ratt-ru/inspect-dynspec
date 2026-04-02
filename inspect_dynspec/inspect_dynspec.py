@@ -165,7 +165,7 @@ def inspect_dynspec(
         dec_deg = np.round(np.rad2deg(target_header["DEC_RAD"]), 2)
         ra_deg = np.round(np.rad2deg(target_header["RA_RAD"]), 2)
         name_str = f"{target_header['NAME']} {target_header['SRC-TYPE']}"
-        coord_str = f"$RA={ra_deg}^\degree$ and $DEC={dec_deg}^\degree$"
+        coord_str = fr"$RA={ra_deg}^\degree$ and $DEC={dec_deg}^\degree$"
 
         if debug:
             t_weight_plot_name = os.path.join(
@@ -393,7 +393,7 @@ def inspect_dynspec(
         """
         for k_width in kernel:
             nu_delta, t_delta = k_width
-            kern_str = f"$\Delta\\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
+            kern_str = fr"$\Delta\\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
 
             """
             ################### SMOOTHING TO FURTHER REDUCE NOISE ##############################
