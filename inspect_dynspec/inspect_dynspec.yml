@@ -91,7 +91,7 @@ cabs:
         default: false
       use-gpr:
         dtype: bool
-        info: "Use Gaussian Process Regression (GPR) smoothing instead of standard convolution."
+        info: "Use Gaussian Process Regression (GPR) smoothing instead of standard convolution. If not specified, defaults to False and all gpr parameters are ignored."
         required: false
       gpr-jitter:
         dtype: float
