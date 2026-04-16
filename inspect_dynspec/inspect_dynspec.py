@@ -48,7 +48,10 @@ def find_valid_root(input: str) -> str:
         f"No directory containing {required_dirs} found under {input}"
     )
 
-def determine_vminmaxcenter(data : np.ndarray, std_scale: float, zero_vcenter) -> Tuple[Tuple[float,float],float]:
+
+def determine_vminmaxcenter(
+    data: np.ndarray, std_scale: float, zero_vcenter
+) -> Tuple[Tuple[float, float], float]:
     if np.isnan(data).any():
         vmin = -std_scale * np.nanstd(data)
         vmax = std_scale * np.nanstd(data)
@@ -58,6 +61,7 @@ def determine_vminmaxcenter(data : np.ndarray, std_scale: float, zero_vcenter) -
         vmax = std_scale * np.std(data)
         vcenter = 0.0 if zero_vcenter else np.mean(data)
     return (float(vmin), float(vmax)), float(vcenter)
+
 
 schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspec.yml"))
 
@@ -155,17 +159,15 @@ def inspect_dynspec(
             ).compute()
         )
 
-        LOGGER.info(
-            f"""
+        LOGGER.info(f"""
             Processing target {target + 1}/{nof_targets}...:\n
             Project Name: {target_header["NAME"]}\n
             Source Type: {target_header["SRC-TYPE"]}\n
-            Obs ID: {target_header["OBSID"]}"""
-        )
+            Obs ID: {target_header["OBSID"]}""")
         dec_deg = np.round(np.rad2deg(target_header["DEC_RAD"]), 2)
         ra_deg = np.round(np.rad2deg(target_header["RA_RAD"]), 2)
         name_str = f"{target_header['NAME']} {target_header['SRC-TYPE']}"
-        coord_str = fr"$RA={ra_deg}^\degree$ and $DEC={dec_deg}^\degree$"
+        coord_str = rf"$RA={ra_deg}^{{\circ}}$ and $DEC={dec_deg}^{{\circ}}$"
 
         if debug:
             t_weight_plot_name = os.path.join(
@@ -393,7 +395,7 @@ def inspect_dynspec(
         """
         for k_width in kernel:
             nu_delta, t_delta = k_width
-            kern_str = fr"$\Delta\\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
+            kern_str = rf"$\Delta\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
 
             """
             ################### SMOOTHING TO FURTHER REDUCE NOISE ##############################
@@ -403,10 +405,14 @@ def inspect_dynspec(
                     stx_str = "IQUV"[stx]
 
                     # Here we smooth the target data A.10 and sample the noise. This lets us produce SNR and Jy products
-                    phys_time, delta_time = get_refval_and_axisvals(target_header, axis=1)
+                    phys_time, delta_time = get_refval_and_axisvals(
+                        target_header, axis=1
+                    )
                     phys_time -= phys_time.min()
                     phys_time /= 3600  # sec to hr
-                    phys_freq, delta_freq = get_refval_and_axisvals(target_header, axis=2)
+                    phys_freq, delta_freq = get_refval_and_axisvals(
+                        target_header, axis=2
+                    )
                     phys_time = phys_time[t_slice]
                     phys_freq = phys_freq[nu_slice]
                     nu = phys_freq - phys_freq[0]
@@ -416,7 +422,7 @@ def inspect_dynspec(
                     lt = t_delta / t.max() / 3600
                     t /= t.max()
 
-                    #Calculate a mean plane:
+                    # Calculate a mean plane:
                     mask_bool = mask.astype(bool)
                     mask_nan = np.where(mask_bool, 1, np.nan)
                     rows, cols = np.nonzero(mask)
@@ -427,10 +433,16 @@ def inspect_dynspec(
                     Y = data_flat[mask_bool.ravel()]
                     theta = fit_hyperplane(X, Y)
                     Nv, Nt = mask_bool.shape
-                    trend_flat = theta[0]*np.repeat(np.arange(Nv), Nt) + theta[1]*np.tile(np.arange(Nt), Nv) + theta[2]
-                    trend     = trend_flat.reshape(Nv, Nt)
+                    trend_flat = (
+                        theta[0] * np.repeat(np.arange(Nv), Nt)
+                        + theta[1] * np.tile(np.arange(Nt), Nv)
+                        + theta[2]
+                    )
+                    trend = trend_flat.reshape(Nv, Nt)
                     target_data_detrended = gpr_data_to_smooth - trend
-                    sigma2 = np.var(target_data_detrended[mask_bool]) #dont use zeros in variance calculation
+                    sigma2 = np.var(
+                        target_data_detrended[mask_bool]
+                    )  # dont use zeros in variance calculation
 
                     x_map, x_n = gpr_smooth(
                         jnp.asarray(target_data_detrended),
@@ -439,34 +451,43 @@ def inspect_dynspec(
                         lnu,
                         lt,
                         sigma2,
-                        jitter = gpr_jitter,
-                        cg_tol = gpr_tolerance,
-                        cg_patience = gpr_patience,
-                        cg_maxiter = gpr_maxiter,
-                        nof_weight_samples = gpr_samples)
+                        jitter=gpr_jitter,
+                        cg_tol=gpr_tolerance,
+                        cg_patience=gpr_patience,
+                        cg_maxiter=gpr_maxiter,
+                        nof_weight_samples=gpr_samples,
+                    )
 
                     x_map = np.asarray(x_map)
                     x_n = np.asarray(x_n)
 
-                    x_map = x_map + trend # add back the trend
-                    x_n = x_n + x_map[None, :, :] # add back the trend to each of the samples
+                    x_map = x_map + trend  # add back the trend
+                    x_n = (
+                        x_n + x_map[None, :, :]
+                    )  # add back the trend to each of the samples
 
-                    x_n_var = np.var(x_n, axis=0) * mask_nan #variance of the samples
-                    x_n_std = np.sqrt(x_n_var) #standard deviation of the samples
-                    std_inv_nan = (1 / (x_n_std + 1e-15))  #weights produced from samples
-                    x_map_snr = x_map * std_inv_nan #GPR smoothed SNR map, masking out flagged regions
+                    x_n_var = np.var(x_n, axis=0) * mask_nan  # variance of the samples
+                    x_n_std = np.sqrt(x_n_var)  # standard deviation of the samples
+                    std_inv_nan = 1 / (x_n_std + 1e-15)  # weights produced from samples
+                    x_map_snr = (
+                        x_map * std_inv_nan
+                    )  # GPR smoothed SNR map, masking out flagged regions
 
                     mask_1d = np.where(np.sum(mask, axis=0) > 0, 1.0, np.nan)
 
                     std_x = np.sqrt(np.var(x_n, axis=0))
                     std_inv_x = 1 / (std_x + 1e-12)
-                    lc_snr = np.sum(x_map * std_inv_x, axis=0) / Nv #summed x_map/std across freq
-                    lc_n_snr = np.sum(x_n * std_inv_x, axis=1) / Nv #summed x_n/std (samples) across freq
-                    lc_snr_var = np.var(lc_n_snr, axis=0) #take variance
+                    lc_snr = (
+                        np.sum(x_map * std_inv_x, axis=0) / Nv
+                    )  # summed x_map/std across freq
+                    lc_n_snr = (
+                        np.sum(x_n * std_inv_x, axis=1) / Nv
+                    )  # summed x_n/std (samples) across freq
+                    lc_snr_var = np.var(lc_n_snr, axis=0)  # take variance
                     lc_snr_masked = lc_snr * mask_1d
                     lc_snr_var_masked = lc_snr_var * mask_1d
 
-                    #Jy point:
+                    # Jy point:
                     gprjy_title = (
                         ""
                         if plot_for_paper
@@ -477,13 +498,15 @@ def inspect_dynspec(
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
                     )
                     x_map_nan = x_map * mask_nan
-                    vminmax, vcenter = determine_vminmaxcenter(x_map_nan, std_scale, zero_vcenter=zero_vcenter)
+                    vminmax, vcenter = determine_vminmaxcenter(
+                        x_map_nan, std_scale, zero_vcenter=zero_vcenter
+                    )
                     plot_smoothed_data(
-                        smoothed_data = x_map_nan,
+                        smoothed_data=x_map_nan,
                         nu_slice=nu_slice,
                         t_slice=t_slice,
-                        nu_delta = nu_delta,
-                        t_delta = t_delta,
+                        nu_delta=nu_delta,
+                        t_delta=t_delta,
                         output=gprjy_plotname,
                         header=target_header,
                         vminmax=vminmax,
@@ -491,12 +514,12 @@ def inspect_dynspec(
                         dpi=dpi,
                         cmap=cmap,
                         title=gprjy_title,
-                        cbar_label="mJy", # units of mJy
+                        cbar_label="mJy",  # units of mJy
                         figsize=figsize,
-                        return_plot=False
+                        return_plot=False,
                     )
 
-                    #SNR plot
+                    # SNR plot
                     gprsnr_title = (
                         ""
                         if plot_for_paper
@@ -506,13 +529,15 @@ def inspect_dynspec(
                         output_dir,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_SNR.png",
                     )
-                    vminmax,vcenter=determine_vminmaxcenter(x_map_snr, std_scale, zero_vcenter=zero_vcenter)
+                    vminmax, vcenter = determine_vminmaxcenter(
+                        x_map_snr, std_scale, zero_vcenter=zero_vcenter
+                    )
                     plot_smoothed_data(
-                        smoothed_data = x_map_snr,
+                        smoothed_data=x_map_snr,
                         nu_slice=nu_slice,
                         t_slice=t_slice,
-                        nu_delta = nu_delta,
-                        t_delta = t_delta,
+                        nu_delta=nu_delta,
+                        t_delta=t_delta,
                         output=gprsnr_plotname,
                         header=target_header,
                         vminmax=vminmax,
@@ -522,7 +547,7 @@ def inspect_dynspec(
                         title=gprsnr_title,
                         cbar_label="SNR",
                         figsize=figsize,
-                        return_plot=False
+                        return_plot=False,
                     )
                     gprlcsnr_title = (
                         ""
@@ -542,11 +567,14 @@ def inspect_dynspec(
                         dpi=dpi,
                         cbar_label="SNR",
                         title=gprlcsnr_title,
-                        figsize=(12,6),
-                        colour="royalblue")
-                    
+                        figsize=(12, 6),
+                        colour="royalblue",
+                    )
+
                     if debug:
-                        vminmax, vcenter = determine_vminmaxcenter(x_n_var, std_scale, zero_vcenter=zero_vcenter)
+                        vminmax, vcenter = determine_vminmaxcenter(
+                            x_n_var, std_scale, zero_vcenter=zero_vcenter
+                        )
                         gprvar_title = (
                             ""
                             if plot_for_paper
@@ -567,9 +595,9 @@ def inspect_dynspec(
                             dpi=dpi,
                             cmap=cmap,
                             title=gprvar_title,
-                            cbar_label="mJy", # units of mJy?
-                            figsize=(12,6),
-                            return_plot=False
+                            cbar_label="mJy",  # units of mJy?
+                            figsize=(12, 6),
+                            return_plot=False,
                         )
 
             else:
@@ -586,9 +614,7 @@ def inspect_dynspec(
                     n_threads,
                 )
                 cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
-                sdata = (
-                    conv_target_data_var_normalised / cwgt_nonzero
-                )
+                sdata = conv_target_data_var_normalised / cwgt_nonzero
 
                 for stx_idx, stx in enumerate(stokes_slice):
                     stx_str = "IQUV"[stx]
@@ -602,7 +628,9 @@ def inspect_dynspec(
                         output_dir,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_convolve_Jy.png",
                     )
-                    vminmax, vcenter = determine_vminmaxcenter(sdata[stx_idx, :, :], std_scale, zero_vcenter=zero_vcenter)
+                    vminmax, vcenter = determine_vminmaxcenter(
+                        sdata[stx_idx, :, :], std_scale, zero_vcenter=zero_vcenter
+                    )
                     plot_smoothed_data(
                         sdata[stx_idx, :, :],
                         nu_slice,
@@ -663,6 +691,7 @@ def plot_dynspec(
     nu_slice: slice,
     t_slice: slice,
     vminmax: tuple,
+    vcenter: Optional[float] = None,
     dpi: int = 300,
     cmap: str = "inferno",
     title: str = "",
@@ -693,13 +722,17 @@ def plot_dynspec(
     nu_ticks = fetch_axis_ticks(header, axis=2)[nu_slice]
     vmin, vmax = vminmax
 
+    if vcenter is not None and vmin < vcenter < vmax:
+        colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+    else:
+        colornorm = colors.Normalize(vmin=vmin, vmax=vmax)
+
     _, ax = plt.subplots(1, 1, figsize=figsize)
     with time_support(simplify=True):
         im = ax.imshow(
             data,
             cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
+            norm=colornorm,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             origin="lower",
@@ -890,7 +923,11 @@ def plot_smoothed_data(
     plt.subplots_adjust(hspace=0.1)  # Adjust the space between subplots
     # Top plot
     with time_support(simplify=True):
-        colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+        if vcenter is not None and vmin < vcenter < vmax:
+            colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+        else:
+            colornorm = colors.Normalize(vmin=vmin, vmax=vmax)
+            
         im0 = ax.imshow(
             smoothed_data,
             cmap=cmap,
@@ -955,6 +992,7 @@ def plot_smoothed_data(
     plt.close()
     return None
 
+
 def plot_light_curve_with_errors(
     mean_lc: np.ndarray,
     var_lc: np.ndarray,
@@ -963,7 +1001,7 @@ def plot_light_curve_with_errors(
     output: str,
     dpi: int = 300,
     title: str = "",
-    cbar_label: str = "mJy", # Used for y-axis label and formatting
+    cbar_label: str = "mJy",  # Used for y-axis label and formatting
     figsize: tuple = (12, 5),
     colour: str = "royalblue",
     return_plot: bool = False,
@@ -987,27 +1025,27 @@ def plot_light_curve_with_errors(
     """
     t_ticks = fetch_t_ticks_mjd(header)[t_slice]
     times = [t.to_datetime() for t in t_ticks]
-    
+
     std_lc = np.sqrt(var_lc)
 
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
     with time_support(simplify=True):
-        ax.plot(times, mean_lc, color=colour, lw=0.75, label='Mean Flux')
-        
+        ax.plot(times, mean_lc, color=colour, lw=0.75, label="Mean Flux")
+
         ax.fill_between(
-            times, 
-            mean_lc - std_lc, 
-            mean_lc + std_lc, 
-            color=colour, 
-            alpha=0.3, 
-            label=r'1$\sigma$ Uncertainty'
+            times,
+            mean_lc - std_lc,
+            mean_lc + std_lc,
+            color=colour,
+            alpha=0.3,
+            label=r"1$\sigma$ Uncertainty",
         )
 
         if cbar_label == "mJy":
             ax.yaxis.set_major_formatter(FuncFormatter(format_func))
         ax.set_ylabel(cbar_label)
-        
+
         locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
         formatter = mdates.ConciseDateFormatter(locator)
         ax.xaxis.set_major_locator(locator)
@@ -1015,14 +1053,14 @@ def plot_light_curve_with_errors(
         ax.set_xlabel("Time (UTC)")
 
     ax.set_title(title)
-    ax.legend(loc='upper right')
-    ax.grid(True, linestyle='--', alpha=0.4)
+    ax.legend(loc="upper right")
+    ax.grid(True, linestyle="--", alpha=0.4)
 
     plt.savefig(output, dpi=dpi, bbox_inches="tight")
-    
+
     if return_plot:
         return ax
-    
+
     plt.close()
     return None
 
@@ -1086,11 +1124,12 @@ def plot_denoising_progression(
         sharey=True,
     )
     with time_support(simplify=True):
+        vmin0, vmax0 = -std_scale * np.std(target_data), std_scale * np.std(target_data)
+        norm0 = colors.TwoSlopeNorm(vmin=vmin0, vcenter=0.0, vmax=vmax0) if vmin0 < 0 < vmax0 else colors.Normalize(vmin=vmin0, vmax=vmax0)
         im0 = ax[0].imshow(
             target_data,
             cmap=cmap,
-            vmin=-std_scale * np.std(target_data),
-            vmax=std_scale * np.std(target_data),
+            norm=norm0,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             interpolation="none",
@@ -1110,11 +1149,12 @@ def plot_denoising_progression(
         ax[0].xaxis.set_major_locator(locator)
         ax[0].xaxis.set_major_formatter(formatter)
 
+        vmin1, vmax1 = -std_scale * np.std(target_a_denoised), std_scale * np.std(target_a_denoised)
+        norm1 = colors.TwoSlopeNorm(vmin=vmin1, vcenter=0.0, vmax=vmax1) if vmin1 < 0 < vmax1 else colors.Normalize(vmin=vmin1, vmax=vmax1)
         im1 = ax[1].imshow(
             target_a_denoised,
             cmap=cmap,
-            vmin=-std_scale * np.std(target_a_denoised),
-            vmax=std_scale * np.std(target_a_denoised),
+            norm=norm1,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             interpolation="none",
@@ -1134,11 +1174,12 @@ def plot_denoising_progression(
         ax[1].xaxis.set_major_locator(locator)
         ax[1].xaxis.set_major_formatter(formatter)
 
+        vmin2, vmax2 = -std_scale * np.std(target_a_e_denoised), std_scale * np.std(target_a_e_denoised)
+        norm2 = colors.TwoSlopeNorm(vmin=vmin2, vcenter=0.0, vmax=vmax2) if vmin2 < 0 < vmax2 else colors.Normalize(vmin=vmin2, vmax=vmax2)
         im2 = ax[2].imshow(
             target_a_e_denoised,
             cmap=cmap,
-            vmin=-std_scale * np.std(target_a_e_denoised),
-            vmax=std_scale * np.std(target_a_e_denoised),
+            norm=norm2,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             interpolation="none",
@@ -1211,6 +1252,7 @@ def make_kernel(x, l):
     l_sigma = l / 2 * np.sqrt(2 * np.log(2))
     nx = x.size
     return np.exp(-((x - x[nx // 2]) ** 2) / (2 * l_sigma**2))
+
 
 def convolve(
     data: np.ndarray,
@@ -1382,7 +1424,9 @@ def get_excess_variance(
     nstack, _, _, _ = onoff_a_whitened.shape
 
     # Convert to Dask array for parallel computation of MAD
-    onoff_a_whitened_dask = da.from_array(onoff_a_whitened, chunks=(nstack, 'auto', 'auto', 'auto'))
+    onoff_a_whitened_dask = da.from_array(
+        onoff_a_whitened, chunks=(nstack, "auto", "auto", "auto")
+    )
     onoff_a_whitened_mad = da.median(
         da.abs(onoff_a_whitened_dask - da.median(onoff_a_whitened_dask, axis=0)), axis=0
     ).compute()
