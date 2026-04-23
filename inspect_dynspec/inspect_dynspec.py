@@ -244,9 +244,9 @@ def inspect_dynspec(
                 output_dir,
                 f"{name_str.replace(' ', '_')}_{target_header['RA_RAD']}_{target_header['DEC_RAD']}_flagged_regions.png",
             )
-            vminmax = (np.min(mask), np.max(mask))
+            vminmax = (0, 1)
             plot_dynspec(
-                data=mask,
+                data=nanmask,
                 output=mask_plot_name,
                 t_ticks=t_ticks,
                 nu_ticks=nu_ticks,
@@ -311,7 +311,7 @@ def inspect_dynspec(
                     output_dir,
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_denoise_progression.png",
                 )
-                denoise_title = f"{name_str} stokes {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
+                denoise_title = f"{name_str} {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
                 plot_denoising_progression(
                     target_data[stx_idx, :, :],
                     target_data_a_whitened[stx_idx, :, :],
@@ -326,7 +326,7 @@ def inspect_dynspec(
                     figsize=figsize,
                 )
                 LOGGER.info(
-                    f"Wrote denoising progression plot for Stokes {stx_str} to {denoise_prog_name}"
+                    f"Wrote denoising progression plot for {stx_str} to {denoise_prog_name}"
                 )
 
                 var_e_plot_name = os.path.join(
@@ -334,8 +334,9 @@ def inspect_dynspec(
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_var_e.png",
                 )
                 var_e_title = (
-                    f"excess variance for {name_str}\nstokes {stx_str} at {coord_str}"
+                    f"excess variance for {name_str}\n{stx_str} at {coord_str}"
                 )
+                var_e = var_e * np.where(mask == 0, np.nan, 1)
                 vminmax = (0, std_scale * np.std(var_e[stx_idx, :, :]))
                 plot_dynspec(
                     var_e[stx_idx, :, :],
@@ -350,17 +351,17 @@ def inspect_dynspec(
                     figsize=figsize,
                 )
                 LOGGER.info(
-                    f"Wrote excess variance plot for Stokes {stx_str} to {var_e_plot_name}"
+                    f"Wrote excess variance plot for {stx_str} to {var_e_plot_name}"
                 )
 
         """
-        ################### OPTIONALLY CALCULATE CIRCULAR POLARISATION ########################
+        ################### OPTIONALLY CALCULATE CIRCULAR POLARISATION FRACTION ########################
         """
         if calc_circular_pol:
             # check that both I and V stokes parameters were specified:
             if 0 not in stokes_slice or 3 not in stokes_slice:
                 LOGGER.warning(
-                    "To calculate circular polarisation, both Stokes I and V must be specified, skipping..."
+                    "To calculate circular polarisation fraction, both Stokes I and V must be specified, skipping..."
                 )
             else:
                 circ_data_e_a_denoised = calc_circ_polarisation(
@@ -378,13 +379,13 @@ def inspect_dynspec(
                 )
 
         """
-        ################### OPTIONALLY CALCULATING LINEAR POLARISATION ##########################
+        ################### OPTIONALLY CALCULATING LINEAR POLARISATION FRACTION ##########################
         """
         if calc_linear_pol:
             # check that I Q and U stokes parameters were specified:
             if 0 not in stokes_slice or 1 not in stokes_slice or 2 not in stokes_slice:
                 LOGGER.warning(
-                    "To calculate linear polarisation, Stokes I, Q and U must be specified, skipping..."
+                    "To calculate linear polarisation fraction, Stokes I, Q and U must be specified, skipping..."
                 )
             else:
                 linear_data_e_a_denoised = calc_linear_polarisation(
@@ -948,12 +949,93 @@ def calc_rm_synthesis(
     return fdata, phi_range
 
 
+def calc_total_polarised_power(
+    arg_data: np.ndarray, stokes_slice: np.ndarray
+) -> np.ndarray:
+    """
+    Args:
+        data: 3D array of data (n_pol, n_freq, n_time).
+        stokes_slice: Slice of the Stokes parameters to consider.
+    Returns:
+        3D array of total polarised power sqrt(Q^2 + U^2 + V^2).
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+    v_indices = np.where(stokes_slice == 3)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+    V = data[v_indices, :, :]
+    total_pol = np.sqrt(np.pow(Q, 2) + np.pow(U, 2) + np.pow(V, 2))
+    total_pol_sub_mean = total_pol - np.mean(total_pol)
+    return total_pol_sub_mean[np.newaxis, :, :]
+
+
+def calc_rm_synthesis(
+    arg_data: np.ndarray,
+    header: fits.header.Header,
+    mask: np.ndarray,
+    stokes_slice: np.ndarray,
+    phi_min: float,
+    phi_max: float,
+    n_phi: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate RM synthesis on smoothed data
+    Args:
+        arg_data: 3D array of data (n_pol, n_freq, n_time).
+        header: FITS header.
+        mask: 2D array of flagged regions.
+        stokes_slice: Slice of the Stokes parameters to consider.
+        phi_min: Minimum Faraday depth.
+        phi_max: Maximum Faraday depth.
+        n_phi: Number of Faraday depth bins.
+    Returns:
+        3D array of RM synthesis results.
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+
+    # complex linear polarisation: shape (n_freq, n_time)
+    complex_linear_pol = Q + 1j * U
+
+    lambda_val, _ = get_refval_and_axisvals(header, axis=2)
+    lambda_sq = (1 / (lambda_val / 1000)) ** 2
+
+    phi_range = np.linspace(phi_min, phi_max, n_phi)
+    n_freq, n_time = complex_linear_pol.shape
+
+    fdata = np.empty((len(phi_range), n_time), dtype=complex)
+    fdata[:] = np.nan + 0j
+
+    for t in range(n_time):
+        good_mask = mask[:, t].astype(bool)
+        nof_chan = np.count_nonzero(good_mask)
+        if nof_chan == 0:
+            continue
+
+        vec = complex_linear_pol[good_mask, t]
+        lam_sq_sel = lambda_sq[good_mask]
+        exp_matrix = np.exp(-2j * np.outer(lam_sq_sel, phi_range) / float(nof_chan))
+
+        res = vec @ exp_matrix
+
+        fdata[:, t] = res / float(nof_chan)
+
+    return fdata, phi_range
+
+
 def calc_circ_polarisation(
     arg_data: np.ndarray, stokes_slice: np.ndarray, tolerance: float = 1e-4
 ) -> np.ndarray:
     """
     Args:
-        data: 3D array of data (n_pol, n_freq, n_time).
+        arg_data: 3D array of data (n_pol, n_freq, n_time).
         stokes_slice: Slice of the Stokes parameters to consider.
     Returns:
         3D array of circular polarisation fraction V/I.
@@ -974,7 +1056,7 @@ def calc_linear_polarisation(
 ) -> np.ndarray:
     """
     Args:
-        data: 3D array of data (n_pol, n_freq, n_time).
+        arg_data: 3D array of data (n_pol, n_freq, n_time).
         stokes_slice: Slice of the Stokes parameters to consider.
     Returns:
         3D array of linear polarisation fraction sqrt((Q^2 + U^2) / I^2).
@@ -1126,7 +1208,6 @@ def plot_smoothed_data(
             cbar0.ax.yaxis.set_major_formatter(FuncFormatter(format_func))
         cbar0.set_label(cbar_label)
 
-        # Define the margin as a fraction of the total ranges
         total_time_range_seconds = (t1 - t0).total_seconds()
 
         if plot_ellipse:
@@ -1277,15 +1358,13 @@ def plot_denoising_progression(
         else 1
     )
 
+    n_freq, n_time = target_data.shape
+    freq_time_ratio = n_freq / max(1, n_time)
+    height_scale = max(1.0, min(freq_time_ratio, 3.0))
+    fig_w = max(figsize[0], 9)
+    fig_h = max(figsize[1], 3) * height_scale
     _, ax = plt.subplots(
-        1,
-        3,
-        figsize=(
-            (figsize[0] * aspect_ratio_t) + 1.6,
-            (figsize[1] * aspect_ratio_f) + 3.3,
-        ),
-        sharex=True,
-        sharey=True,
+        1, 3, figsize=(fig_w, fig_h), sharex=True, sharey=True, constrained_layout=True
     )
     with time_support(simplify=True):
         vmin0, vmax0 = -std_scale * np.std(target_data), std_scale * np.std(target_data)

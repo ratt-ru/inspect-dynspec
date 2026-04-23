@@ -3,10 +3,11 @@ import logging
 
 CONSOLE = None
 
+
 def create_logger():
     """Create a console logger"""
     log = logging.getLogger(__name__)
-    cfmt = logging.Formatter(('%(name)s - %(asctime)s %(levelname)s - %(message)s'))
+    cfmt = logging.Formatter(("%(name)s - %(asctime)s %(levelname)s - %(message)s"))
     log.setLevel(logging.DEBUG)
     global CONSOLE
     CONSOLE = logging.StreamHandler(sys.stdout)
@@ -15,7 +16,9 @@ def create_logger():
     log.addHandler(CONSOLE)
     return log
 
+
 def set_console_logging_level(level: int):
     CONSOLE.setLevel(level)
+
 
 LOGGER = create_logger()
