@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 
 # Set the non-interactive mode for apt-get
 ENV DEBIAN_FRONTEND=noninteractive
@@ -10,12 +10,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && add-apt-repository ppa:deadsnakes/ppa
 
-# Install Python 3.9 and other essential packages
+# Install Python 3.12 and other essential packages
 RUN apt-get update && apt-get install -y \
-    python3.9 \
-    python3.9-venv \
-    python3.9-dev \
-    python3.9-distutils \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
     cmake \
     gcc \
     g++ \
@@ -23,13 +22,13 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean
 
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.9 get-pip.py && \
+    python3.12 get-pip.py && \
     rm get-pip.py
 
-# Update alternatives to set Python 3.9 as the default
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 \
+# Update alternatives to set Python 3.12 as the default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3 1 \
-    && update-alternatives --set python3 /usr/bin/python3.9 \
+    && update-alternatives --set python3 /usr/bin/python3.12 \
     && update-alternatives --set python /usr/bin/python3
 
 RUN mkdir -p /faux_home/measures && \
@@ -40,15 +39,11 @@ ENV CASARCFILES=/faux_home/.casarc
 
 RUN python -mpip install --no-cache-dir --upgrade pip wheel
 
-RUN python -mpip install setuptools==70.3.0
-
-RUN python3.9 -mpip install numpy==1.22.4 matplotlib==3.5.3
-
 RUN git clone https://github.com/talonmyburgh/DDFacet.git && \
     cd DDFacet && \
-    git checkout UseAPP_kMS_MeerKLASS_0_fixes && \
+    git checkout SSD3NancepMPI && \
     cd .. && \
-    python -mpip install --use-pep517 ./DDFacet
+    python -mpip install ./DDFacet
 
 RUN python -mpip install --no-cache-dir "git+https://github.com/caracal-pipeline/stimela"
 
@@ -57,11 +52,8 @@ RUN python -mpip install --no-cache-dir "git+https://github.com/caracal-pipeline
 # Install meqtrees-cattery
 RUN python -mpip install --no-cache-dir "meqtrees-cattery"
 
-# Install killMS from the specified GitHub repository
-RUN python -mpip install --no-cache-dir "git+https://github.com/JSKenyon/killMS"
-
 # Install DynSpecMS from the specified GitHub repository
-RUN python -mpip install --no-cache-dir "git+https://github.com/cyriltasse/DynSpecMS.git@SplitCatalog_fixes"
+RUN python -mpip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_jax"
 
 # set XDG cache (normally ~/.cache)
 ENV XDG_CACHE_HOME /var/cache
