@@ -83,6 +83,8 @@ def inspect_dynspec(
     zero_vcenter: bool,
     calc_circular_pol: bool,
     calc_linear_pol: bool,
+    calc_pol_power: bool,
+    calc_rm_synth: Optional[list],
     zero_sub_value_tolerance: float,
     cmap: str,
     dpi: int,
@@ -116,6 +118,18 @@ def inspect_dynspec(
 
     cmap = check_colormap(cmap)
 
+    STOKES_LABELS = ["I", "Q", "U", "V", "C", "L", "P", "RM"]
+    STOKES_NAMES = [
+        "Stokes I",
+        "Stokes Q",
+        "Stokes U",
+        "Stokes V",
+        "Circular Polarisation Fraction",
+        "Linear Polarisation Fraction",
+        "Total Polarised Power",
+        "RM Synthesis",
+    ]
+
     paths = get_files_paths(root)
     nof_targets = len(paths["target"]["data"])
     nof_off_targets = len(paths["off_target"]["data"])
@@ -135,7 +149,7 @@ def inspect_dynspec(
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
 
-        stokes_indices = [i for i, char in enumerate("IQUV") if char in stokes]
+        stokes_indices = [i for i, char in enumerate(STOKES_LABELS) if char in stokes]
         if stokes_indices:
             stokes_slice = np.array(stokes_indices, dtype=int)
         else:
@@ -158,6 +172,12 @@ def inspect_dynspec(
                 index=target,
             ).compute()
         )
+
+        t_ticks = fetch_t_ticks_mjd(target_header)[t_slice]
+        nu_ticks = fetch_axis_ticks(target_header, axis=2)[nu_slice]
+        mask = get_mask(target_data, blow_up_scale=1e4)
+        mask_bool = mask.astype(bool)
+        mask_nan = np.where(mask_bool, 1, np.nan)
 
         LOGGER.info(f"""
             Processing target {target + 1}/{nof_targets}...:\n
@@ -182,12 +202,11 @@ def inspect_dynspec(
             plot_dynspec(
                 target_weights,
                 t_weight_plot_name,
-                target_header,
-                nu_slice,
-                t_slice,
+                t_ticks,
+                nu_ticks,
                 vminmax,
-                dpi,
-                cmap,
+                dpi=dpi,
+                cmap=cmap,
                 title=t_weight_title,
                 figsize=figsize,
             )
@@ -203,12 +222,11 @@ def inspect_dynspec(
             plot_dynspec(
                 target_weights2,
                 t2weight_plot_name,
-                target_header,
-                nu_slice,
-                t_slice,
+                t_ticks,
+                nu_ticks,
                 vminmax,
-                dpi,
-                cmap,
+                dpi=dpi,
+                cmap=cmap,
                 title=t2weight_title,
                 figsize=figsize,
             )
@@ -218,7 +236,6 @@ def inspect_dynspec(
         """
         ################# DETERMINE DATA REGIONS ################################
         """
-        mask = get_mask(target_data, blow_up_scale=1e4)
         # target_data = np.ones(target_data.shape) * 1e-3
         # target_data *= mask  # Jy
         if debug:
@@ -231,9 +248,8 @@ def inspect_dynspec(
             plot_dynspec(
                 data=mask,
                 output=mask_plot_name,
-                header=target_header,
-                nu_slice=nu_slice,
-                t_slice=t_slice,
+                t_ticks=t_ticks,
+                nu_ticks=nu_ticks,
                 vminmax=vminmax,
                 dpi=dpi,
                 cmap=cmap,
@@ -260,12 +276,11 @@ def inspect_dynspec(
             plot_dynspec(
                 var_a,
                 var_a_plot_name,
-                target_header,
-                nu_slice,
-                t_slice,
+                t_ticks,
+                nu_ticks,
                 vminmax,
-                dpi,
-                cmap,
+                dpi=dpi,
+                cmap=cmap,
                 title=var_a_title,
                 figsize=figsize,
             )
@@ -291,20 +306,19 @@ def inspect_dynspec(
         """
         if debug:
             for stx_idx, stx in enumerate(stokes_slice):
-                stx_str = "IQUV"[stx]
+                stx_str = STOKES_NAMES[stx]
                 denoise_prog_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_denoise_progression.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_denoise_progression.png",
                 )
                 denoise_title = f"{name_str} stokes {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
                 plot_denoising_progression(
                     target_data[stx_idx, :, :],
                     target_data_a_whitened[stx_idx, :, :],
                     target_data_var_normalised[stx_idx, :, :],
-                    nu_slice,
-                    t_slice,
+                    t_ticks,
+                    nu_ticks,
                     denoise_prog_name,
-                    target_header,
                     std_scale,
                     dpi,
                     cmap,
@@ -317,7 +331,7 @@ def inspect_dynspec(
 
                 var_e_plot_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_var_e.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_var_e.png",
                 )
                 var_e_title = (
                     f"excess variance for {name_str}\nstokes {stx_str} at {coord_str}"
@@ -326,12 +340,11 @@ def inspect_dynspec(
                 plot_dynspec(
                     var_e[stx_idx, :, :],
                     var_e_plot_name,
-                    target_header,
-                    nu_slice,
-                    t_slice,
+                    t_ticks,
+                    nu_ticks,
                     vminmax,
-                    dpi,
-                    cmap,
+                    dpi=dpi,
+                    cmap=cmap,
                     title=var_e_title,
                     cbar_label="SNR",
                     figsize=figsize,
@@ -391,18 +404,46 @@ def inspect_dynspec(
         stokes_slice = np.unique(stokes_slice)
 
         """
+        ################### OPTIONALLY CALCULATING TOTAL POLARISATION POWER ##########################
+        """
+        if calc_pol_power:
+            # check that Q U and V stokes parameters were specified:
+            if 1 not in stokes_slice or 2 not in stokes_slice or 3 not in stokes_slice:
+                LOGGER.warning(
+                    "To calculate polarisation power, Stokes Q, U and V must be specified, skipping..."
+                )
+            else:
+                tp_data_e_a_denoised = calc_total_polarised_power(
+                    target_data_var_normalised, stokes_slice
+                )
+                # add index 6 to stokes slice:
+                stokes_slice = np.append(stokes_slice, 6)
+
+                target_data_var_normalised = np.append(
+                    target_data_var_normalised, tp_data_e_a_denoised, axis=0
+                )
+                # we must also extend wgt to account for the new stokes parameter (1's)
+                wgt = np.append(
+                    wgt, np.ones(wgt[0, :, :].shape)[np.newaxis, :, :], axis=0
+                )
+
+        stokes_slice = np.unique(stokes_slice)
+
+        """
         ################### ITERATE THROUGH PROVIDED KERNELS #################################
         """
         for k_width in kernel:
             nu_delta, t_delta = k_width
             kern_str = rf"$\Delta\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
 
+            smoothed_target_data_var_normalised = np.zeros_like(target_data_var_normalised)
+
             """
             ################### SMOOTHING TO FURTHER REDUCE NOISE ##############################
             """
             if use_gpr:
                 for stx_idx, stx in enumerate(stokes_slice):
-                    stx_str = "IQUV"[stx]
+                    stx_str = STOKES_NAMES[stx]
 
                     # Here we smooth the target data A.10 and sample the noise. This lets us produce SNR and Jy products
                     phys_time, delta_time = get_refval_and_axisvals(
@@ -423,8 +464,6 @@ def inspect_dynspec(
                     t /= t.max()
 
                     # Calculate a mean plane:
-                    mask_bool = mask.astype(bool)
-                    mask_nan = np.where(mask_bool, 1, np.nan)
                     rows, cols = np.nonzero(mask)
                     X = np.vstack((rows, cols))
 
@@ -473,6 +512,8 @@ def inspect_dynspec(
                         x_map * std_inv_nan
                     )  # GPR smoothed SNR map, masking out flagged regions
 
+                    smoothed_target_data_var_normalised[stx_idx, :, :] = x_map
+
                     mask_1d = np.where(np.sum(mask, axis=0) > 0, 1.0, np.nan)
 
                     std_x = np.sqrt(np.var(x_n, axis=0))
@@ -495,7 +536,7 @@ def inspect_dynspec(
                     )
                     gprjy_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
                     )
                     x_map_nan = x_map * mask_nan
                     vminmax, vcenter = determine_vminmaxcenter(
@@ -503,12 +544,11 @@ def inspect_dynspec(
                     )
                     plot_smoothed_data(
                         smoothed_data=x_map_nan,
-                        nu_slice=nu_slice,
-                        t_slice=t_slice,
+                        t_ticks=t_ticks,
+                        nu_ticks=nu_ticks,
                         nu_delta=nu_delta,
                         t_delta=t_delta,
                         output=gprjy_plotname,
-                        header=target_header,
                         vminmax=vminmax,
                         vcenter=vcenter,
                         dpi=dpi,
@@ -527,19 +567,18 @@ def inspect_dynspec(
                     )
                     gprsnr_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_SNR.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_SNR.png",
                     )
                     vminmax, vcenter = determine_vminmaxcenter(
                         x_map_snr, std_scale, zero_vcenter=zero_vcenter
                     )
                     plot_smoothed_data(
                         smoothed_data=x_map_snr,
-                        nu_slice=nu_slice,
-                        t_slice=t_slice,
+                        t_ticks=t_ticks,
+                        nu_ticks=nu_ticks,
                         nu_delta=nu_delta,
                         t_delta=t_delta,
                         output=gprsnr_plotname,
-                        header=target_header,
                         vminmax=vminmax,
                         vcenter=vcenter,
                         dpi=dpi,
@@ -556,13 +595,12 @@ def inspect_dynspec(
                     )
                     gprlcsnr_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
                     )
                     plot_light_curve_with_errors(
                         lc_snr_masked,
                         lc_snr_var_masked,
-                        t_slice,
-                        target_header,
+                        t_ticks,
                         output=gprlcsnr_plotname,
                         dpi=dpi,
                         cbar_label="SNR",
@@ -582,14 +620,13 @@ def inspect_dynspec(
                         )
                         gprvar_plotname = os.path.join(
                             output_dir,
-                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_variance.png",
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_variance.png",
                         )
                         plot_dynspec(
                             data=x_n_var,
                             output=gprvar_plotname,
-                            header=target_header,
-                            nu_slice=nu_slice,
-                            t_slice=t_slice,
+                            t_ticks=t_ticks,
+                            nu_ticks=nu_ticks,
                             vminmax=vminmax,
                             vcenter=vcenter,
                             dpi=dpi,
@@ -616,8 +653,10 @@ def inspect_dynspec(
                 cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
                 sdata = conv_target_data_var_normalised / cwgt_nonzero
 
+                smoothed_target_data_var_normalised = sdata
+
                 for stx_idx, stx in enumerate(stokes_slice):
-                    stx_str = "IQUV"[stx]
+                    stx_str = STOKES_NAMES[stx]
 
                     sdata_title = (
                         ""
@@ -626,19 +665,18 @@ def inspect_dynspec(
                     )
                     sdata_plot_name = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str}_{int(nu_delta)}MHz_{int(t_delta)}s_convolve_Jy.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_convolve_Jy.png",
                     )
                     vminmax, vcenter = determine_vminmaxcenter(
                         sdata[stx_idx, :, :], std_scale, zero_vcenter=zero_vcenter
                     )
                     plot_smoothed_data(
                         sdata[stx_idx, :, :],
-                        nu_slice,
-                        t_slice,
                         nu_delta,
                         t_delta,
                         output=sdata_plot_name,
-                        header=target_header,
+                        t_ticks=t_ticks,
+                        nu_ticks=nu_ticks,
                         vminmax=vminmax,
                         vcenter=vcenter,
                         dpi=dpi,
@@ -651,6 +689,61 @@ def inspect_dynspec(
                     LOGGER.info(
                         f"Wrote sdata smoothed plot for stokes {stx_str} to {sdata_plot_name}"
                     )
+
+            """
+            ################### OPTIONALLY CALCULATING RM SYNTHESIS ##########################
+            """
+            if calc_rm_synth is not None:
+                if 1 not in stokes_slice or 2 not in stokes_slice:
+                    LOGGER.warning(
+                        "To calculate rm synthesis, Stokes Q and U must be specified, skipping..."
+                    )
+                else:
+                    smoothed_target_data_var_denoised_nan = (
+                        smoothed_target_data_var_normalised * mask_nan
+                    )
+                    rm_synth_cdata, phi_range = calc_rm_synthesis(
+                        smoothed_target_data_var_denoised_nan,
+                        target_header,
+                        mask,
+                        stokes_slice,
+                        calc_rm_synth[0],
+                        calc_rm_synth[1],
+                        calc_rm_synth[2],
+                    )
+                    rm_synth_data = np.abs(rm_synth_cdata)
+                    rm_synth_title = (
+                        ""
+                        if plot_for_paper
+                        else f"RM Synthesis for {name_str}\nat {coord_str} with kernel {kern_str}"
+                    )
+                    rmsynth_plot_name = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_rm_synth_{int(nu_delta)}MHz_{int(t_delta)}s.png",
+                    )
+                    vminmax = (
+                        None,
+                        std_scale * np.nanstd(rm_synth_data[:, :]),
+                    )
+                    plot_smoothed_data(
+                        smoothed_data=rm_synth_data,
+                        nu_delta=nu_delta,
+                        t_delta=t_delta,
+                        output=rmsynth_plot_name,
+                        t_ticks=t_ticks,
+                        nu_ticks=phi_range,
+                        vminmax=vminmax,
+                        vcenter=0,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=rm_synth_title,
+                        cbar_label="",
+                        figsize=figsize,
+                        ylabel=rf"$\phi$ (rad/$\mu m^2$) $\times 10^{-3}$",
+                        plot_ellipse=False,
+                        return_plot=False,
+                    )
+                    LOGGER.info(f"Wrote rm synth smoothed plot to {rmsynth_plot_name}")
 
 
 @delayed
@@ -687,9 +780,8 @@ def check_colormap(colormap_name):
 def plot_dynspec(
     data: np.ndarray,
     output: str,
-    header: fits.header.Header,
-    nu_slice: slice,
-    t_slice: slice,
+    t_ticks: Time,
+    nu_ticks: np.ndarray,
     vminmax: tuple,
     vcenter: Optional[float] = None,
     dpi: int = 300,
@@ -704,9 +796,8 @@ def plot_dynspec(
     Args:
         data: 2D array of data.
         output: Filename for the plot.
-        header: FITS header.
-        nu_slice: Slice of the frequency range to consider.
-        t_slice: Slice of the time range to consider.
+        t_ticks: Time ticks for the x-axis.
+        nu_ticks: Frequency ticks for the y-axis.
         vminmax: Plot saturates at vmin,vmax = vminmax in plots
         dpi: DPI of the output plots
         cmap: Colormap to use for plotting.
@@ -717,9 +808,7 @@ def plot_dynspec(
     Returns:
         Optionally returns Axes object for external plotting.
     """
-    t_ticks = fetch_t_ticks_mjd(header)[t_slice]
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
-    nu_ticks = fetch_axis_ticks(header, axis=2)[nu_slice]
     vmin, vmax = vminmax
 
     if vcenter is not None and vmin < vcenter < vmax:
@@ -777,6 +866,86 @@ def get_mask(data: np.ndarray, blow_up_scale: float = 1e4) -> np.ndarray:
     data = data * blow_up_scale
     mask = np.where(data[0, :, :] == 0, 0, mask)
     return mask
+
+def calc_total_polarised_power(
+    arg_data: np.ndarray, stokes_slice: np.ndarray
+) -> np.ndarray:
+    """
+    Args:
+        data: 3D array of data (n_pol, n_freq, n_time).
+        stokes_slice: Slice of the Stokes parameters to consider.
+    Returns:
+        3D array of total polarised power sqrt(Q^2 + U^2 + V^2).
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+    v_indices = np.where(stokes_slice == 3)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+    V = data[v_indices, :, :]
+    total_pol = np.sqrt(np.pow(Q, 2) + np.pow(U, 2) + np.pow(V, 2))
+    total_pol_sub_mean = total_pol - np.mean(total_pol)
+    return total_pol_sub_mean[np.newaxis, :, :]
+
+
+def calc_rm_synthesis(
+    arg_data: np.ndarray,
+    header: fits.header.Header,
+    mask: np.ndarray,
+    stokes_slice: np.ndarray,
+    phi_min: float,
+    phi_max: float,
+    n_phi: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate RM synthesis on smoothed data
+    Args:
+        arg_data: 3D array of data (n_pol, n_freq, n_time).
+        header: FITS header.
+        mask: 2D array of flagged regions.
+        stokes_slice: Slice of the Stokes parameters to consider.
+        phi_min: Minimum Faraday depth.
+        phi_max: Maximum Faraday depth.
+        n_phi: Number of Faraday depth bins.
+    Returns:
+        3D array of RM synthesis results.
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+
+    # complex linear polarisation: shape (n_freq, n_time)
+    complex_linear_pol = Q + 1j * U
+
+    lambda_val, _ = get_refval_and_axisvals(header, axis=2)
+    lambda_sq = (1 / (lambda_val / 1000)) ** 2
+
+    phi_range = np.linspace(phi_min, phi_max, n_phi)
+    n_freq, n_time = complex_linear_pol.shape
+
+    fdata = np.empty((len(phi_range), n_time), dtype=complex)
+    fdata[:] = np.nan + 0j
+
+    for t in range(n_time):
+        good_mask = mask[:, t].astype(bool)
+        nof_chan = np.count_nonzero(good_mask)
+        if nof_chan == 0:
+            continue
+
+        vec = complex_linear_pol[good_mask, t]
+        lam_sq_sel = lambda_sq[good_mask]
+        exp_matrix = np.exp(-2j * np.outer(lam_sq_sel, phi_range) / float(nof_chan))
+
+        res = vec @ exp_matrix
+
+        fdata[:, t] = res / float(nof_chan)
+
+    return fdata, phi_range
 
 
 def calc_circ_polarisation(
@@ -879,12 +1048,11 @@ def format_func_ghz(value, tick_number):
 
 def plot_smoothed_data(
     smoothed_data: np.ndarray,
-    nu_slice: slice,
-    t_slice: slice,
     nu_delta: float,
     t_delta: float,
     output: str,
-    header: fits.header.Header,
+    t_ticks: Time,
+    nu_ticks: np.ndarray,
     vminmax: tuple,
     vcenter: float,
     dpi: int,
@@ -892,17 +1060,19 @@ def plot_smoothed_data(
     title: str = "",
     cbar_label: str = "",
     figsize: tuple = (12, 6),
+    xlabel: str = "Time (UTC)",
+    ylabel: str = "$\\nu$ (GHz)",
+    plot_ellipse: bool = True,
     return_plot: bool = False,
 ) -> Optional[Axes]:
     """
     Args:
         smoothed_data: 2D array of smoothed data.
-        nu_slice: Slice of the frequency range to consider.
-        t_slice: Slice of the time range to consider.
         nu_delta: FWHM frequency width of the kernel.
         t_delta: FWHM time width of the kernel.
         output: Plot filename.
-        header: FITS header.
+        t_ticks: Time ticks for the x-axis.
+        nu_ticks: Frequency ticks for the y-axis.
         vminmax: Plot saturates at vmin,vmax = vminmax in plots
         vcenter: Center of the colorbar.
         dpi: DPI of the output plots
@@ -910,20 +1080,21 @@ def plot_smoothed_data(
         title: Title to add to the plot.
         cbar_label: Label for the color
         figsize: Size of the figure.
+        xlabel: Label for the x-axis.
+        ylabel: Label for the y-axis.
+        plot_ellipse: Whether to plot an ellipse representing the kernel size on the dynspec.
         return_plot: Whether to return the Axes object for external plotting.
     Returns:
         Optionally returns Axes object for external plotting.
     """
-    t_ticks = fetch_t_ticks_mjd(header)[t_slice]
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
-    nu_ticks = fetch_axis_ticks(header, axis=2)[nu_slice]
 
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     vmin, vmax = vminmax
     plt.subplots_adjust(hspace=0.1)  # Adjust the space between subplots
     # Top plot
     with time_support(simplify=True):
-        if vcenter is not None and vmin < vcenter < vmax:
+        if vcenter is not None and vmin is not None and vmax is not None and vmin < vcenter < vmax:
             colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
         else:
             colornorm = colors.Normalize(vmin=vmin, vmax=vmax)
@@ -937,7 +1108,7 @@ def plot_smoothed_data(
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             origin="lower",
         )
-        ax.set_ylabel("$\\nu$ (GHz)")
+        ax.set_ylabel(ylabel)
         ax.yaxis.set_major_locator(
             MaxNLocator(nbins=6)
         )  # Control the number of y-ticks
@@ -957,31 +1128,33 @@ def plot_smoothed_data(
 
         # Define the margin as a fraction of the total ranges
         total_time_range_seconds = (t1 - t0).total_seconds()
-        twin_y_axis = ax.twiny()
-        twin_y_axis.set_xlim(0, len(t_ticks) - 1)
-        # Hide the y-ticks and y-labels for the twin axis
-        twin_y_axis.xaxis.set_ticks([])
-        twin_y_axis.xaxis.set_ticklabels([])
 
-        ellipse_center_x = len(t_ticks) - 125
-        ellipse_center_y = nu_ticks[-1] - 55
-        ellipse_width_time = t_delta / total_time_range_seconds * len(t_ticks)
+        if plot_ellipse:
+            twin_y_axis = ax.twiny()
+            twin_y_axis.set_xlim(0, len(t_ticks) - 1)
+            # Hide the y-ticks and y-labels for the twin axis
+            twin_y_axis.xaxis.set_ticks([])
+            twin_y_axis.xaxis.set_ticklabels([])
 
-        # Create the ellipse
-        kernel_ellipse = patches.Ellipse(
-            (ellipse_center_x, ellipse_center_y),
-            width=ellipse_width_time,
-            height=nu_delta,
-            edgecolor="black",
-            facecolor="gainsboro",
-            linewidth=1,
-        )
-        twin_y_axis.add_patch(kernel_ellipse)
+            ellipse_center_x = len(t_ticks) - 125
+            ellipse_center_y = nu_ticks[-1] - 55
+            ellipse_width_time = t_delta / total_time_range_seconds * len(t_ticks)
+
+            # Create the ellipse
+            kernel_ellipse = patches.Ellipse(
+                (ellipse_center_x, ellipse_center_y),
+                width=ellipse_width_time,
+                height=nu_delta,
+                edgecolor="black",
+                facecolor="gainsboro",
+                linewidth=1,
+            )
+            twin_y_axis.add_patch(kernel_ellipse)
 
         ax.set_xlim(t0, t1)
         locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
         formatter = mdates.ConciseDateFormatter(locator)
-        ax.set_xlabel("Time (UTC)")
+        ax.set_xlabel(xlabel)
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(formatter)
 
@@ -996,12 +1169,11 @@ def plot_smoothed_data(
 def plot_light_curve_with_errors(
     mean_lc: np.ndarray,
     var_lc: np.ndarray,
-    t_slice: slice,
-    header: fits.header.Header,
+    t_ticks: Time,
     output: str,
     dpi: int = 300,
     title: str = "",
-    cbar_label: str = "mJy",  # Used for y-axis label and formatting
+    cbar_label: str = "mJy",
     figsize: tuple = (12, 5),
     colour: str = "royalblue",
     return_plot: bool = False,
@@ -1010,10 +1182,8 @@ def plot_light_curve_with_errors(
     Args:
         mean_lc: 1D array of mean light curve values
         var_lc: 1D array of variance of the light curve values
-        t_slice: Slice of the time range to consider
-        header: FITS header
+        t_ticks: Time ticks for the x-axis
         output: Plot filename
-        header: FITS header
         dpi: DPI of the output plots
         title: Title to add to the plot
         cbar_label: Label for the colour
@@ -1023,9 +1193,7 @@ def plot_light_curve_with_errors(
     Returns:
         Optionally returns Axes object for external plotting.
     """
-    t_ticks = fetch_t_ticks_mjd(header)[t_slice]
     times = [t.to_datetime() for t in t_ticks]
-
     std_lc = np.sqrt(var_lc)
 
     fig, ax = plt.subplots(1, 1, figsize=figsize)
@@ -1069,10 +1237,9 @@ def plot_denoising_progression(
     target_data: np.ndarray,
     target_a_denoised: np.ndarray,
     target_a_e_denoised: np.ndarray,
-    nu_slice: slice,
-    t_slice: slice,
+    t_ticks: Time,
+    nu_ticks: np.ndarray,
     output: str,
-    header: fits.header.Header,
     std_scale: float,
     dpi: int,
     cmap: str,
@@ -1086,10 +1253,9 @@ def plot_denoising_progression(
         target_data: 2D array of data (n_freq, n_time)
         target_a_denoised: 3D array of analytically denoised data
         target_a_e_denoised: 3D array of excessly denoised data
-        nu_slice: Slice of the frequency range to consider
-        t_slice: Slice of the time range to consider
+        t_ticks: Time ticks for the x-axis
+        nu_ticks: Frequency ticks for the y-axis
         output: Output file name
-        header: FITS header
         std_scale: Plot saturates at std_scale * std(data) in plots
         dpi: DPI of the output plots
         cmap: Colormap to use for plotting
@@ -1098,9 +1264,7 @@ def plot_denoising_progression(
     Returns:
         Optionally returns Axes object for external plotting
     """
-    t_ticks = fetch_t_ticks_mjd(header)[t_slice]
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
-    nu_ticks = fetch_axis_ticks(header, axis=2)[nu_slice]
 
     aspect_ratio_t = (
         target_data.shape[1] / target_data.shape[0]
@@ -1207,40 +1371,6 @@ def plot_denoising_progression(
     plt.close()
 
 
-def fold_dynspec(
-    data: np.ndarray, mask: np.ndarray, weights=None, data_axis=1, weight_axis=1
-) -> np.ndarray:
-    """
-    Args:
-        data: 3D array of data (n_pol, n_freq, n_time).
-        mask: 2D array of flagged regions.
-        weights: 3D array of weights that if provided are used for normalisation.
-        normalise: Whether to normalise the data after folding.
-        data_axis: Data axis to fold the data along.
-        weight_axis: Weight axis to fold the weights along.
-    Returns:
-        array of folded data reduced by dimension in which folded
-        and where weights are provided, the propagated error of the folded data
-        calculated as sqrt(variance * weight / sum(weight))
-    """
-    if weights is not None:
-        norm = np.sum(weights, axis=weight_axis)  # non-uniform weights
-        norm = np.where(norm == 0, 1, norm)  # avoid division by zero
-    else:
-        norm = np.count_nonzero(data, axis=data_axis)  # uniform weights
-        norm = np.where(norm == 0, 1, norm)  # avoid division by zero
-
-    mask_norm = np.count_nonzero(mask, axis=0)
-    sum_mask = np.sum(mask, axis=0) / np.where(mask_norm == 0, 1, mask_norm)
-    if not np.all(np.logical_or(sum_mask == 0, sum_mask == 1)):
-        raise ValueError("Mask norm should only contain values 0 or 1")
-
-    std_dev = (np.sqrt(1 / norm)) * sum_mask
-
-    folded_data = (np.sum(data, axis=data_axis)) / norm
-    return folded_data, std_dev
-
-
 def make_kernel(x, l):
     """
     Args:
@@ -1264,7 +1394,7 @@ def convolve(
     t_slice: slice,
     mask: np.ndarray,
     n_threads: int = 32,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Args:
         data: 3D array of data (n_pol, n_freq, n_time).
@@ -1468,7 +1598,7 @@ def get_refval_and_axisvals(hdr: fits.header.Header, axis: int = 3) -> tuple:
 
 def extract_identifier(filename):
     match = re.search(
-        r"(\d{2}:\d{2}:\d{2}\.\d{3}_-?\d{2}:\d{2}:\d{2}\.\d{3})", filename
+        r"(\d{2}:\d{2}:\d{2}\.\d{3}_[+-]\d{2}:\d{2}:\d{2}\.\d{3})", filename
     )
     return match.group(1) if match else None
 

@@ -21,7 +21,6 @@ matplotlib = "^3.9.4"
 jax = "*"
 jaxlib = "*"
 omegaconf = "*"
-scabha = "*"
 
 [tool.poetry.scripts]
 inspect-dynspec = "inspect_dynspec.inspect_dynspec:inspect_dynspec"
