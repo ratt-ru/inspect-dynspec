@@ -26,8 +26,8 @@ assign:
 images:
   ms2dynspec:
     assign:
-      CMD: ms2dynspec --help
-      default_python_version: '3.9'
+      CMD: rims run --help
+      default_python_version: '3.12'
     versions:
       '{branch}':
         dockerfile: Dockerfile.branch
