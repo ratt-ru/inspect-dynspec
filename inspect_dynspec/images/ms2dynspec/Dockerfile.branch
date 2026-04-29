@@ -45,10 +45,6 @@ RUN git clone https://github.com/talonmyburgh/DDFacet.git && \
     cd .. && \
     python -mpip install ./DDFacet
 
-RUN python -mpip install --no-cache-dir "git+https://github.com/caracal-pipeline/stimela"
-
-RUN python -mpip install --no-cache-dir "git+https://github.com/caracal-pipeline/cult-cargo"
-
 # Install meqtrees-cattery
 RUN python -mpip install --no-cache-dir "meqtrees-cattery"
 
