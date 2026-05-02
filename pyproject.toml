@@ -18,6 +18,9 @@ art = "*"
 numpy = "*"
 click = "*"
 matplotlib = "^3.9.4"
+jax = "*"
+jaxlib = "*"
+omegaconf = "*"
 
 [tool.poetry.scripts]
 inspect-dynspec = "inspect_dynspec.inspect_dynspec:inspect_dynspec"
@@ -26,4 +29,7 @@ inspect-dynspec = "inspect_dynspec.inspect_dynspec:inspect_dynspec"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-## add section for dev component which installs builder and Dockerfiles
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+black = "*"
+build = "*"

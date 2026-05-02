@@ -1,7 +1,7 @@
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 import matplotlib.dates as mdates
 from scabha.schema_utils import clickify_parameters
-from typing import Optional
+from typing import Optional, Tuple
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.axes import Axes
@@ -14,6 +14,7 @@ import dask.array as da
 from dask import delayed, compute
 from ducc0.fft import r2c, c2r
 import numpy as np
+import jax.numpy as jnp
 import click
 import os
 import re
@@ -21,6 +22,7 @@ import glob
 from omegaconf import OmegaConf
 from . import LOGGER, set_console_logging_level
 from art import text2art
+from .gpr_smooth import gpr_smooth, fit_hyperplane
 
 
 def convert_tuple_to_list_of_lists(input_tuple):
@@ -47,6 +49,20 @@ def find_valid_root(input: str) -> str:
     )
 
 
+def determine_vminmaxcenter(
+    data: np.ndarray, std_scale: float, zero_vcenter
+) -> Tuple[Tuple[float, float], float]:
+    if np.isnan(data).any():
+        vmin = -std_scale * np.nanstd(data)
+        vmax = std_scale * np.nanstd(data)
+        vcenter = 0.0 if zero_vcenter else np.nanmean(data)
+    else:
+        vmin = -std_scale * np.std(data)
+        vmax = std_scale * np.std(data)
+        vcenter = 0.0 if zero_vcenter else np.mean(data)
+    return (float(vmin), float(vmax)), float(vcenter)
+
+
 schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspec.yml"))
 
 
@@ -64,6 +80,7 @@ def inspect_dynspec(
     std_scale: float,
     debug: bool,
     plot_for_paper: bool,
+    zero_vcenter: bool,
     calc_circular_pol: bool,
     calc_linear_pol: bool,
     calc_pol_power: bool,
@@ -72,6 +89,12 @@ def inspect_dynspec(
     cmap: str,
     dpi: int,
     verbose: bool,
+    use_gpr: bool,
+    gpr_jitter: float,
+    gpr_tolerance: float,
+    gpr_patience: int,
+    gpr_maxiter: int,
+    gpr_samples: int,
 ) -> None:
 
     script_name = text2art("Inspect Dynspec")
@@ -95,7 +118,6 @@ def inspect_dynspec(
 
     cmap = check_colormap(cmap)
 
-    # Adjust for additional "Stokes" (but not really) parameters as more are added
     STOKES_LABELS = ["I", "Q", "U", "V", "C", "L", "P", "RM"]
     STOKES_NAMES = [
         "Stokes I",
@@ -153,21 +175,19 @@ def inspect_dynspec(
 
         t_ticks = fetch_t_ticks_mjd(target_header)[t_slice]
         nu_ticks = fetch_axis_ticks(target_header, axis=2)[nu_slice]
-
         mask = get_mask(target_data, blow_up_scale=1e4)
-        nanmask = np.where(mask == 0, np.nan, 1)
+        mask_bool = mask.astype(bool)
+        mask_nan = np.where(mask_bool, 1, np.nan)
 
-        LOGGER.info(
-            f"""
+        LOGGER.info(f"""
             Processing target {target + 1}/{nof_targets}...:\n
             Project Name: {target_header["NAME"]}\n
             Source Type: {target_header["SRC-TYPE"]}\n
-            Obs ID: {target_header["OBSID"]}"""
-        )
+            Obs ID: {target_header["OBSID"]}""")
         dec_deg = np.round(np.rad2deg(target_header["DEC_RAD"]), 2)
         ra_deg = np.round(np.rad2deg(target_header["RA_RAD"]), 2)
         name_str = f"{target_header['NAME']} {target_header['SRC-TYPE']}"
-        coord_str = f"$RA={ra_deg}^\degree$ and $DEC={dec_deg}^\degree$"
+        coord_str = rf"$RA={ra_deg}^{{\circ}}$ and $DEC={dec_deg}^{{\circ}}$"
 
         if debug:
             t_weight_plot_name = os.path.join(
@@ -180,11 +200,11 @@ def inspect_dynspec(
                 np.max(target_weights),
             )
             plot_dynspec(
-                data=target_weights * nanmask,
-                output=t_weight_plot_name,
-                t_ticks=t_ticks,
-                nu_ticks=nu_ticks,
-                vminmax=vminmax,
+                target_weights,
+                t_weight_plot_name,
+                t_ticks,
+                nu_ticks,
+                vminmax,
                 dpi=dpi,
                 cmap=cmap,
                 title=t_weight_title,
@@ -200,11 +220,11 @@ def inspect_dynspec(
                 np.max(target_weights2),
             )
             plot_dynspec(
-                data=target_weights2 * nanmask,
-                output=t2weight_plot_name,
-                t_ticks=t_ticks,
-                nu_ticks=nu_ticks,
-                vminmax=vminmax,
+                target_weights2,
+                t2weight_plot_name,
+                t_ticks,
+                nu_ticks,
+                vminmax,
                 dpi=dpi,
                 cmap=cmap,
                 title=t2weight_title,
@@ -213,7 +233,11 @@ def inspect_dynspec(
             LOGGER.info(f"Wrote W2 weights plot to {t2weight_plot_name}")
 
         # As we have sliced the data already, all matrices from here on will be sliced to shape.
-
+        """
+        ################# DETERMINE DATA REGIONS ################################
+        """
+        # target_data = np.ones(target_data.shape) * 1e-3
+        # target_data *= mask  # Jy
         if debug:
             mask_title = f"Flagged regions for {name_str}\nat {coord_str}"
             mask_plot_name = os.path.join(
@@ -224,8 +248,8 @@ def inspect_dynspec(
             plot_dynspec(
                 data=nanmask,
                 output=mask_plot_name,
-                nu_ticks=nu_ticks,
                 t_ticks=t_ticks,
+                nu_ticks=nu_ticks,
                 vminmax=vminmax,
                 dpi=dpi,
                 cmap=cmap,
@@ -250,11 +274,11 @@ def inspect_dynspec(
             var_a_title = f"Analytical variance for {name_str}\nat {coord_str}"
             vminmax = (0, std_scale * np.std(var_a))
             plot_dynspec(
-                data=var_a * nanmask,
-                output=var_a_plot_name,
-                t_ticks=t_ticks,
-                nu_ticks=nu_ticks,
-                vminmax=vminmax,
+                var_a,
+                var_a_plot_name,
+                t_ticks,
+                nu_ticks,
+                vminmax,
                 dpi=dpi,
                 cmap=cmap,
                 title=var_a_title,
@@ -275,6 +299,7 @@ def inspect_dynspec(
             LOGGER.info("Completed excess denoising.")
         else:
             target_data_var_normalised = target_data_a_whitened.copy()
+            wgt = (1 / np.where(var_a == 0, 1, var_a)) * mask
 
         """
         ################### PLOT DENOISING PROGRESSION #####################################
@@ -284,20 +309,19 @@ def inspect_dynspec(
                 stx_str = STOKES_NAMES[stx]
                 denoise_prog_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ', '_')}_denoise_progression.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_denoise_progression.png",
                 )
                 denoise_title = f"{name_str} {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
                 plot_denoising_progression(
-                    target_data=target_data[stx_idx, :, :] * nanmask,
-                    target_a_denoised=target_data_a_whitened[stx_idx, :, :] * nanmask,
-                    target_a_e_denoised=target_data_var_normalised[stx_idx, :, :]
-                    * nanmask,
-                    output=denoise_prog_name,
-                    t_ticks=t_ticks,
-                    nu_ticks=nu_ticks,
-                    std_scale=std_scale,
-                    dpi=dpi,
-                    cmap=cmap,
+                    target_data[stx_idx, :, :],
+                    target_data_a_whitened[stx_idx, :, :],
+                    target_data_var_normalised[stx_idx, :, :],
+                    t_ticks,
+                    nu_ticks,
+                    denoise_prog_name,
+                    std_scale,
+                    dpi,
+                    cmap,
                     title=denoise_title,
                     figsize=figsize,
                 )
@@ -307,7 +331,7 @@ def inspect_dynspec(
 
                 var_e_plot_name = os.path.join(
                     output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ', '_')}_var_e.png",
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_var_e.png",
                 )
                 var_e_title = (
                     f"excess variance for {name_str}\n{stx_str} at {coord_str}"
@@ -315,11 +339,11 @@ def inspect_dynspec(
                 var_e = var_e * np.where(mask == 0, np.nan, 1)
                 vminmax = (0, std_scale * np.std(var_e[stx_idx, :, :]))
                 plot_dynspec(
-                    data=var_e[stx_idx, :, :] * nanmask,
-                    output=var_e_plot_name,
-                    t_ticks=t_ticks,
-                    nu_ticks=nu_ticks,
-                    vminmax=vminmax,
+                    var_e[stx_idx, :, :],
+                    var_e_plot_name,
+                    t_ticks,
+                    nu_ticks,
+                    vminmax,
                     dpi=dpi,
                     cmap=cmap,
                     title=var_e_title,
@@ -411,31 +435,261 @@ def inspect_dynspec(
         """
         for k_width in kernel:
             nu_delta, t_delta = k_width
-            kern_str = f"$\Delta\\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
+            kern_str = rf"$\Delta\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
+
+            smoothed_target_data_var_normalised = np.zeros_like(target_data_var_normalised)
 
             """
             ################### SMOOTHING TO FURTHER REDUCE NOISE ##############################
             """
-            # smoothed_target_data_var_normalised is sdata
-            conv_target_data_var_normalised, cwgt = convolve(
-                target_data_var_normalised,
-                wgt,
-                target_header,
-                nu_delta,
-                t_delta,
-                nu_slice,
-                t_slice,
-                mask,
-                n_threads,
-            )
-            cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
-            smoothed_target_data_var_normalised = (
-                conv_target_data_var_normalised / cwgt_nonzero
-            )
-            sstd = (1 / np.sqrt(cwgt_nonzero)) * mask
-            sSNR = smoothed_target_data_var_normalised * np.sqrt(
-                cwgt
-            )  # i.e sSNR = sdata / sstd = sdata * sqrt(wgt)
+            if use_gpr:
+                for stx_idx, stx in enumerate(stokes_slice):
+                    stx_str = STOKES_NAMES[stx]
+
+                    # Here we smooth the target data A.10 and sample the noise. This lets us produce SNR and Jy products
+                    phys_time, delta_time = get_refval_and_axisvals(
+                        target_header, axis=1
+                    )
+                    phys_time -= phys_time.min()
+                    phys_time /= 3600  # sec to hr
+                    phys_freq, delta_freq = get_refval_and_axisvals(
+                        target_header, axis=2
+                    )
+                    phys_time = phys_time[t_slice]
+                    phys_freq = phys_freq[nu_slice]
+                    nu = phys_freq - phys_freq[0]
+                    lnu = nu_delta / nu.max()
+                    nu /= nu.max()
+                    t = phys_time - phys_time[0]
+                    lt = t_delta / t.max() / 3600
+                    t /= t.max()
+
+                    # Calculate a mean plane:
+                    rows, cols = np.nonzero(mask)
+                    X = np.vstack((rows, cols))
+
+                    gpr_data_to_smooth = target_data[stx_idx, :, :]
+                    data_flat = gpr_data_to_smooth.ravel()
+                    Y = data_flat[mask_bool.ravel()]
+                    theta = fit_hyperplane(X, Y)
+                    Nv, Nt = mask_bool.shape
+                    trend_flat = (
+                        theta[0] * np.repeat(np.arange(Nv), Nt)
+                        + theta[1] * np.tile(np.arange(Nt), Nv)
+                        + theta[2]
+                    )
+                    trend = trend_flat.reshape(Nv, Nt)
+                    target_data_detrended = gpr_data_to_smooth - trend
+                    sigma2 = np.var(
+                        target_data_detrended[mask_bool]
+                    )  # dont use zeros in variance calculation
+
+                    x_map, x_n = gpr_smooth(
+                        jnp.asarray(target_data_detrended),
+                        jnp.asarray(mask_bool),
+                        jnp.asarray(wgt[stx_idx, :, :]),
+                        lnu,
+                        lt,
+                        sigma2,
+                        jitter=gpr_jitter,
+                        cg_tol=gpr_tolerance,
+                        cg_patience=gpr_patience,
+                        cg_maxiter=gpr_maxiter,
+                        nof_weight_samples=gpr_samples,
+                    )
+
+                    x_map = np.asarray(x_map)
+                    x_n = np.asarray(x_n)
+
+                    x_map = x_map + trend  # add back the trend
+                    x_n = (
+                        x_n + x_map[None, :, :]
+                    )  # add back the trend to each of the samples
+
+                    x_n_var = np.var(x_n, axis=0) * mask_nan  # variance of the samples
+                    x_n_std = np.sqrt(x_n_var)  # standard deviation of the samples
+                    std_inv_nan = 1 / (x_n_std + 1e-15)  # weights produced from samples
+                    x_map_snr = (
+                        x_map * std_inv_nan
+                    )  # GPR smoothed SNR map, masking out flagged regions
+
+                    smoothed_target_data_var_normalised[stx_idx, :, :] = x_map
+
+                    mask_1d = np.where(np.sum(mask, axis=0) > 0, 1.0, np.nan)
+
+                    std_x = np.sqrt(np.var(x_n, axis=0))
+                    std_inv_x = 1 / (std_x + 1e-12)
+                    lc_snr = (
+                        np.sum(x_map * std_inv_x, axis=0) / Nv
+                    )  # summed x_map/std across freq
+                    lc_n_snr = (
+                        np.sum(x_n * std_inv_x, axis=1) / Nv
+                    )  # summed x_n/std (samples) across freq
+                    lc_snr_var = np.var(lc_n_snr, axis=0)  # take variance
+                    lc_snr_masked = lc_snr * mask_1d
+                    lc_snr_var_masked = lc_snr_var * mask_1d
+
+                    # Jy point:
+                    gprjy_title = (
+                        ""
+                        if plot_for_paper
+                        else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    )
+                    gprjy_plotname = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
+                    )
+                    x_map_nan = x_map * mask_nan
+                    vminmax, vcenter = determine_vminmaxcenter(
+                        x_map_nan, std_scale, zero_vcenter=zero_vcenter
+                    )
+                    plot_smoothed_data(
+                        smoothed_data=x_map_nan,
+                        t_ticks=t_ticks,
+                        nu_ticks=nu_ticks,
+                        nu_delta=nu_delta,
+                        t_delta=t_delta,
+                        output=gprjy_plotname,
+                        vminmax=vminmax,
+                        vcenter=vcenter,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=gprjy_title,
+                        cbar_label="mJy",  # units of mJy
+                        figsize=figsize,
+                        return_plot=False,
+                    )
+
+                    # SNR plot
+                    gprsnr_title = (
+                        ""
+                        if plot_for_paper
+                        else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    )
+                    gprsnr_plotname = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_SNR.png",
+                    )
+                    vminmax, vcenter = determine_vminmaxcenter(
+                        x_map_snr, std_scale, zero_vcenter=zero_vcenter
+                    )
+                    plot_smoothed_data(
+                        smoothed_data=x_map_snr,
+                        t_ticks=t_ticks,
+                        nu_ticks=nu_ticks,
+                        nu_delta=nu_delta,
+                        t_delta=t_delta,
+                        output=gprsnr_plotname,
+                        vminmax=vminmax,
+                        vcenter=vcenter,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=gprsnr_title,
+                        cbar_label="SNR",
+                        figsize=figsize,
+                        return_plot=False,
+                    )
+                    gprlcsnr_title = (
+                        ""
+                        if plot_for_paper
+                        else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    )
+                    gprlcsnr_plotname = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
+                    )
+                    plot_light_curve_with_errors(
+                        lc_snr_masked,
+                        lc_snr_var_masked,
+                        t_ticks,
+                        output=gprlcsnr_plotname,
+                        dpi=dpi,
+                        cbar_label="SNR",
+                        title=gprlcsnr_title,
+                        figsize=(12, 6),
+                        colour="royalblue",
+                    )
+
+                    if debug:
+                        vminmax, vcenter = determine_vminmaxcenter(
+                            x_n_var, std_scale, zero_vcenter=zero_vcenter
+                        )
+                        gprvar_title = (
+                            ""
+                            if plot_for_paper
+                            else f"Variance of GPR samples, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                        )
+                        gprvar_plotname = os.path.join(
+                            output_dir,
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_variance.png",
+                        )
+                        plot_dynspec(
+                            data=x_n_var,
+                            output=gprvar_plotname,
+                            t_ticks=t_ticks,
+                            nu_ticks=nu_ticks,
+                            vminmax=vminmax,
+                            vcenter=vcenter,
+                            dpi=dpi,
+                            cmap=cmap,
+                            title=gprvar_title,
+                            cbar_label="mJy",  # units of mJy?
+                            figsize=(12, 6),
+                            return_plot=False,
+                        )
+
+            else:
+                # Here we convolve the data SNR values and then divide by the convolved weights to get smoothed Jy values.
+                conv_target_data_var_normalised, cwgt = convolve(
+                    target_data_var_normalised,
+                    wgt,
+                    target_header,
+                    nu_delta,
+                    t_delta,
+                    nu_slice,
+                    t_slice,
+                    mask,
+                    n_threads,
+                )
+                cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
+                sdata = conv_target_data_var_normalised / cwgt_nonzero
+
+                smoothed_target_data_var_normalised = sdata
+
+                for stx_idx, stx in enumerate(stokes_slice):
+                    stx_str = STOKES_NAMES[stx]
+
+                    sdata_title = (
+                        ""
+                        if plot_for_paper
+                        else f"Analytically and excess denoised, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
+                    )
+                    sdata_plot_name = os.path.join(
+                        output_dir,
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_convolve_Jy.png",
+                    )
+                    vminmax, vcenter = determine_vminmaxcenter(
+                        sdata[stx_idx, :, :], std_scale, zero_vcenter=zero_vcenter
+                    )
+                    plot_smoothed_data(
+                        sdata[stx_idx, :, :],
+                        nu_delta,
+                        t_delta,
+                        output=sdata_plot_name,
+                        t_ticks=t_ticks,
+                        nu_ticks=nu_ticks,
+                        vminmax=vminmax,
+                        vcenter=vcenter,
+                        dpi=dpi,
+                        cmap=cmap,
+                        title=sdata_title,
+                        cbar_label="mJy",
+                        figsize=figsize,
+                        return_plot=False,
+                    )
+                    LOGGER.info(
+                        f"Wrote sdata smoothed plot for stokes {stx_str} to {sdata_plot_name}"
+                    )
 
             """
             ################### OPTIONALLY CALCULATING RM SYNTHESIS ##########################
@@ -447,7 +701,7 @@ def inspect_dynspec(
                     )
                 else:
                     smoothed_target_data_var_denoised_nan = (
-                        smoothed_target_data_var_normalised * nanmask
+                        smoothed_target_data_var_normalised * mask_nan
                     )
                     rm_synth_cdata, phi_range = calc_rm_synthesis(
                         smoothed_target_data_var_denoised_nan,
@@ -486,184 +740,11 @@ def inspect_dynspec(
                         title=rm_synth_title,
                         cbar_label="",
                         figsize=figsize,
-                        ylabel="$\\phi$ (rad/$\mu\\text{m}^2$) $\\times 10^{-3}$",
+                        ylabel=rf"$\phi$ (rad/$\mu m^2$) $\times 10^{-3}$",
                         plot_ellipse=False,
                         return_plot=False,
                     )
                     LOGGER.info(f"Wrote rm synth smoothed plot to {rmsynth_plot_name}")
-
-            if debug:
-                # smooth target data
-                conv_target_data, _ = convolve(
-                    target_data,
-                    np.ones(target_data[0, :, :].shape),
-                    target_header,
-                    nu_delta,
-                    t_delta,
-                    nu_slice,
-                    t_slice,
-                    mask,
-                    n_threads,
-                )
-
-                # smooth target data analytically denoised
-                conv_target_data_a_whitened, cwgt_white = convolve(
-                    target_data_a_whitened,
-                    (1 / np.sqrt(np.where(var_a == 0, 1, var_a))) * mask,
-                    target_header,
-                    nu_delta,
-                    t_delta,
-                    nu_slice,
-                    t_slice,
-                    mask,
-                    n_threads,
-                )
-                smoothed_target_data_a_denoised = (
-                    conv_target_data_a_whitened
-                    / np.where(cwgt_white == 0, 1, cwgt_white)
-                )
-
-            for stx_idx, stx in enumerate(stokes_slice):
-                stx_str = STOKES_NAMES[stx]
-
-                sdata_title = (
-                    ""
-                    if plot_for_paper
-                    else f"Analytically and excess denoised, {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
-                )
-                sdata_plot_name = os.path.join(
-                    output_dir,
-                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_e_denoise.png",
-                )
-                vminmax = (
-                    -std_scale
-                    * np.std(smoothed_target_data_var_normalised[stx_idx, :, :]),
-                    std_scale
-                    * np.std(smoothed_target_data_var_normalised[stx_idx, :, :]),
-                )
-                plot_smoothed_data(
-                    smoothed_data=smoothed_target_data_var_normalised[stx_idx, :, :]
-                    * nanmask,
-                    nu_delta=nu_delta,
-                    t_delta=t_delta,
-                    output=sdata_plot_name,
-                    t_ticks=t_ticks,
-                    nu_ticks=nu_ticks,
-                    vminmax=vminmax,
-                    vcenter=0,
-                    dpi=dpi,
-                    cmap=cmap,
-                    title=sdata_title,
-                    cbar_label="mJy" if stx_idx in [0, 1, 2, 3] else "",
-                    figsize=figsize,
-                    return_plot=False,
-                )
-                LOGGER.info(
-                    f"Wrote sdata smoothed plot for {stx_str} to {sdata_plot_name}"
-                )
-
-                if debug:
-                    if stx_idx < 4:  # only plot for I, Q, U, V
-                        data_raw_title = (
-                            ""
-                            if plot_for_paper
-                            else f"raw target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                        )
-                        data_raw_plot_name = os.path.join(
-                            output_dir,
-                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_rawdata.png",
-                        )
-                        vminmax = (
-                            -std_scale * np.std(conv_target_data[stx_idx, :, :]),
-                            std_scale * np.std(conv_target_data[stx_idx, :, :]),
-                        )
-                        plot_smoothed_data(
-                            smoothed_data=conv_target_data[stx_idx, :, :] * nanmask,
-                            nu_delta=nu_delta,
-                            t_delta=t_delta,
-                            output=data_raw_plot_name,
-                            t_ticks=t_ticks,
-                            nu_ticks=nu_ticks,
-                            vminmax=vminmax,
-                            vcenter=0,
-                            dpi=dpi,
-                            cmap=cmap,
-                            title=data_raw_title,
-                            cbar_label="mJy",
-                            figsize=figsize,
-                            return_plot=False,
-                        )
-                        LOGGER.info(
-                            f"Wrote target smoothed plot for {stx_str} to {data_raw_plot_name}"
-                        )
-
-                        data_a_title = (
-                            ""
-                            if plot_for_paper
-                            else f"Analytically denoised target, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                        )
-                        data_a_plot_name = os.path.join(
-                            output_dir,
-                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_data_a_denoise.png",
-                        )
-                        vminmax = (
-                            -std_scale
-                            * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
-                            std_scale
-                            * np.std(smoothed_target_data_a_denoised[stx_idx, :, :]),
-                        )
-                        plot_smoothed_data(
-                            smoothed_data=smoothed_target_data_a_denoised[stx_idx, :, :]
-                            * nanmask,
-                            nu_delta=nu_delta,
-                            t_delta=t_delta,
-                            output=data_a_plot_name,
-                            t_ticks=t_ticks,
-                            nu_ticks=nu_ticks,
-                            vminmax=vminmax,
-                            vcenter=0,
-                            dpi=dpi,
-                            cmap=cmap,
-                            title=data_a_title,
-                            cbar_label="mJy",
-                            figsize=figsize,
-                            return_plot=False,
-                        )
-                        LOGGER.info(
-                            f"Wrote target smoothed plot for {stx_str} to {data_a_plot_name}"
-                        )
-                        sSNR_title = (
-                            ""
-                            if plot_for_paper
-                            else f"sSNR, {stx_str} for {name_str}\nat {coord_str}\nwith kernel {kern_str}"
-                        )
-                        sSNR_plot_name = os.path.join(
-                            output_dir,
-                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_{stx_str.replace(' ','_')}_{int(nu_delta)}MHz_{int(t_delta)}s_SNR.png",
-                        )
-                        vminmax = (
-                            -std_scale * np.std(sSNR[stx_idx, :, :]),
-                            std_scale * np.std(sSNR[stx_idx, :, :]),
-                        )
-                        plot_smoothed_data(
-                            smoothed_data=sSNR[stx_idx, :, :] * nanmask,
-                            nu_delta=nu_delta,
-                            t_delta=t_delta,
-                            output=sSNR_plot_name,
-                            t_ticks=t_ticks,
-                            nu_ticks=nu_ticks,
-                            vminmax=vminmax,
-                            vcenter=0,
-                            dpi=dpi,
-                            cmap=cmap,
-                            title=sSNR_title,
-                            cbar_label="SNR",
-                            figsize=figsize,
-                            return_plot=False,
-                        )
-                        LOGGER.info(
-                            f"Wrote sSNR smoothed plot for {stx_str} to {sSNR_plot_name}"
-                        )
 
 
 @delayed
@@ -703,6 +784,7 @@ def plot_dynspec(
     t_ticks: Time,
     nu_ticks: np.ndarray,
     vminmax: tuple,
+    vcenter: Optional[float] = None,
     dpi: int = 300,
     cmap: str = "inferno",
     title: str = "",
@@ -715,8 +797,8 @@ def plot_dynspec(
     Args:
         data: 2D array of data.
         output: Filename for the plot.
-        t_ticks: Time array for the time axis.
-        nu_ticks: Frequency array for the frequency axis.
+        t_ticks: Time ticks for the x-axis.
+        nu_ticks: Frequency ticks for the y-axis.
         vminmax: Plot saturates at vmin,vmax = vminmax in plots
         dpi: DPI of the output plots
         cmap: Colormap to use for plotting.
@@ -730,13 +812,17 @@ def plot_dynspec(
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
     vmin, vmax = vminmax
 
+    if vcenter is not None and vmin < vcenter < vmax:
+        colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+    else:
+        colornorm = colors.Normalize(vmin=vmin, vmax=vmax)
+
     _, ax = plt.subplots(1, 1, figsize=figsize)
     with time_support(simplify=True):
         im = ax.imshow(
             data,
             cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
+            norm=colornorm,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             origin="lower",
@@ -781,6 +867,86 @@ def get_mask(data: np.ndarray, blow_up_scale: float = 1e4) -> np.ndarray:
     data = data * blow_up_scale
     mask = np.where(data[0, :, :] == 0, 0, mask)
     return mask
+
+def calc_total_polarised_power(
+    arg_data: np.ndarray, stokes_slice: np.ndarray
+) -> np.ndarray:
+    """
+    Args:
+        data: 3D array of data (n_pol, n_freq, n_time).
+        stokes_slice: Slice of the Stokes parameters to consider.
+    Returns:
+        3D array of total polarised power sqrt(Q^2 + U^2 + V^2).
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+    v_indices = np.where(stokes_slice == 3)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+    V = data[v_indices, :, :]
+    total_pol = np.sqrt(np.pow(Q, 2) + np.pow(U, 2) + np.pow(V, 2))
+    total_pol_sub_mean = total_pol - np.mean(total_pol)
+    return total_pol_sub_mean[np.newaxis, :, :]
+
+
+def calc_rm_synthesis(
+    arg_data: np.ndarray,
+    header: fits.header.Header,
+    mask: np.ndarray,
+    stokes_slice: np.ndarray,
+    phi_min: float,
+    phi_max: float,
+    n_phi: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate RM synthesis on smoothed data
+    Args:
+        arg_data: 3D array of data (n_pol, n_freq, n_time).
+        header: FITS header.
+        mask: 2D array of flagged regions.
+        stokes_slice: Slice of the Stokes parameters to consider.
+        phi_min: Minimum Faraday depth.
+        phi_max: Maximum Faraday depth.
+        n_phi: Number of Faraday depth bins.
+    Returns:
+        3D array of RM synthesis results.
+    """
+    data = arg_data.copy()
+    q_indices = np.where(stokes_slice == 1)[0][0]
+    u_indices = np.where(stokes_slice == 2)[0][0]
+
+    Q = data[q_indices, :, :]
+    U = data[u_indices, :, :]
+
+    # complex linear polarisation: shape (n_freq, n_time)
+    complex_linear_pol = Q + 1j * U
+
+    lambda_val, _ = get_refval_and_axisvals(header, axis=2)
+    lambda_sq = (1 / (lambda_val / 1000)) ** 2
+
+    phi_range = np.linspace(phi_min, phi_max, n_phi)
+    n_freq, n_time = complex_linear_pol.shape
+
+    fdata = np.empty((len(phi_range), n_time), dtype=complex)
+    fdata[:] = np.nan + 0j
+
+    for t in range(n_time):
+        good_mask = mask[:, t].astype(bool)
+        nof_chan = np.count_nonzero(good_mask)
+        if nof_chan == 0:
+            continue
+
+        vec = complex_linear_pol[good_mask, t]
+        lam_sq_sel = lambda_sq[good_mask]
+        exp_matrix = np.exp(-2j * np.outer(lam_sq_sel, phi_range) / float(nof_chan))
+
+        res = vec @ exp_matrix
+
+        fdata[:, t] = res / float(nof_chan)
+
+    return fdata, phi_range
 
 
 def calc_total_polarised_power(
@@ -987,8 +1153,8 @@ def plot_smoothed_data(
         nu_delta: FWHM frequency width of the kernel.
         t_delta: FWHM time width of the kernel.
         output: Plot filename.
-        t_ticks: Array of time ticks.
-        nu_ticks: Array of frequency ticks.
+        t_ticks: Time ticks for the x-axis.
+        nu_ticks: Frequency ticks for the y-axis.
         vminmax: Plot saturates at vmin,vmax = vminmax in plots
         vcenter: Center of the colorbar.
         dpi: DPI of the output plots
@@ -996,8 +1162,9 @@ def plot_smoothed_data(
         title: Title to add to the plot.
         cbar_label: Label for the color
         figsize: Size of the figure.
-        xlabel: Optional label for the x-axis.
-        ylabel: Optional label for the y-axis.
+        xlabel: Label for the x-axis.
+        ylabel: Label for the y-axis.
+        plot_ellipse: Whether to plot an ellipse representing the kernel size on the dynspec.
         return_plot: Whether to return the Axes object for external plotting.
     Returns:
         Optionally returns Axes object for external plotting.
@@ -1009,7 +1176,11 @@ def plot_smoothed_data(
     plt.subplots_adjust(hspace=0.1)  # Adjust the space between subplots
     # Top plot
     with time_support(simplify=True):
-        colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+        if vcenter is not None and vmin is not None and vmax is not None and vmin < vcenter < vmax:
+            colornorm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+        else:
+            colornorm = colors.Normalize(vmin=vmin, vmax=vmax)
+            
         im0 = ax.imshow(
             smoothed_data,
             cmap=cmap,
@@ -1038,30 +1209,28 @@ def plot_smoothed_data(
         cbar0.set_label(cbar_label)
 
         total_time_range_seconds = (t1 - t0).total_seconds()
-        import datetime
-
-        margin_frac = 0.06
-        x_center_dt = t1 - datetime.timedelta(
-            seconds=margin_frac * total_time_range_seconds
-        )
-        x_center = mdates.date2num(x_center_dt)
-        y_span = nu_ticks[-1] - nu_ticks[0]
-        y_center = nu_ticks[0] + (1.0 - margin_frac) * y_span
-        width_days = t_delta / 86400.0
-        height_freq = nu_delta
 
         if plot_ellipse:
+            twin_y_axis = ax.twiny()
+            twin_y_axis.set_xlim(0, len(t_ticks) - 1)
+            # Hide the y-ticks and y-labels for the twin axis
+            twin_y_axis.xaxis.set_ticks([])
+            twin_y_axis.xaxis.set_ticklabels([])
+
+            ellipse_center_x = len(t_ticks) - 125
+            ellipse_center_y = nu_ticks[-1] - 55
+            ellipse_width_time = t_delta / total_time_range_seconds * len(t_ticks)
+
+            # Create the ellipse
             kernel_ellipse = patches.Ellipse(
-                (x_center, y_center),
-                width=width_days,
-                height=height_freq,
+                (ellipse_center_x, ellipse_center_y),
+                width=ellipse_width_time,
+                height=nu_delta,
                 edgecolor="black",
                 facecolor="gainsboro",
                 linewidth=1,
-                transform=ax.transData,
-                zorder=5,
             )
-            ax.add_patch(kernel_ellipse)
+            twin_y_axis.add_patch(kernel_ellipse)
 
         ax.set_xlim(t0, t1)
         locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
@@ -1078,13 +1247,80 @@ def plot_smoothed_data(
     return None
 
 
+def plot_light_curve_with_errors(
+    mean_lc: np.ndarray,
+    var_lc: np.ndarray,
+    t_ticks: Time,
+    output: str,
+    dpi: int = 300,
+    title: str = "",
+    cbar_label: str = "mJy",
+    figsize: tuple = (12, 5),
+    colour: str = "royalblue",
+    return_plot: bool = False,
+) -> Optional[plt.Axes]:
+    """
+    Args:
+        mean_lc: 1D array of mean light curve values
+        var_lc: 1D array of variance of the light curve values
+        t_ticks: Time ticks for the x-axis
+        output: Plot filename
+        dpi: DPI of the output plots
+        title: Title to add to the plot
+        cbar_label: Label for the colour
+        figsize: Size of the figure
+        colour: The lightcurve colour to use
+        return_plot: Whether to return the Axes object for external plotting
+    Returns:
+        Optionally returns Axes object for external plotting.
+    """
+    times = [t.to_datetime() for t in t_ticks]
+    std_lc = np.sqrt(var_lc)
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    with time_support(simplify=True):
+        ax.plot(times, mean_lc, color=colour, lw=0.75, label="Mean Flux")
+
+        ax.fill_between(
+            times,
+            mean_lc - std_lc,
+            mean_lc + std_lc,
+            color=colour,
+            alpha=0.3,
+            label=r"1$\sigma$ Uncertainty",
+        )
+
+        if cbar_label == "mJy":
+            ax.yaxis.set_major_formatter(FuncFormatter(format_func))
+        ax.set_ylabel(cbar_label)
+
+        locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
+        formatter = mdates.ConciseDateFormatter(locator)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+        ax.set_xlabel("Time (UTC)")
+
+    ax.set_title(title)
+    ax.legend(loc="upper right")
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    plt.savefig(output, dpi=dpi, bbox_inches="tight")
+
+    if return_plot:
+        return ax
+
+    plt.close()
+    return None
+
+
 def plot_denoising_progression(
     target_data: np.ndarray,
     target_a_denoised: np.ndarray,
     target_a_e_denoised: np.ndarray,
-    output: str,
     t_ticks: Time,
     nu_ticks: np.ndarray,
+    output: str,
     std_scale: float,
     dpi: int,
     cmap: str,
@@ -1098,9 +1334,9 @@ def plot_denoising_progression(
         target_data: 2D array of data (n_freq, n_time)
         target_a_denoised: 3D array of analytically denoised data
         target_a_e_denoised: 3D array of excessly denoised data
+        t_ticks: Time ticks for the x-axis
+        nu_ticks: Frequency ticks for the y-axis
         output: Output file name
-        t_ticks: Array of time ticks
-        nu_ticks: Array of frequency ticks
         std_scale: Plot saturates at std_scale * std(data) in plots
         dpi: DPI of the output plots
         cmap: Colormap to use for plotting
@@ -1111,6 +1347,17 @@ def plot_denoising_progression(
     """
     t0, t1 = t_ticks[0].to_datetime(), t_ticks[-1].to_datetime()
 
+    aspect_ratio_t = (
+        target_data.shape[1] / target_data.shape[0]
+        if target_data.shape[0] > target_data.shape[1]
+        else 1
+    )
+    aspect_ratio_f = (
+        target_data.shape[0] / target_data.shape[1]
+        if target_data.shape[1] > target_data.shape[0]
+        else 1
+    )
+
     n_freq, n_time = target_data.shape
     freq_time_ratio = n_freq / max(1, n_time)
     height_scale = max(1.0, min(freq_time_ratio, 3.0))
@@ -1120,11 +1367,12 @@ def plot_denoising_progression(
         1, 3, figsize=(fig_w, fig_h), sharex=True, sharey=True, constrained_layout=True
     )
     with time_support(simplify=True):
+        vmin0, vmax0 = -std_scale * np.std(target_data), std_scale * np.std(target_data)
+        norm0 = colors.TwoSlopeNorm(vmin=vmin0, vcenter=0.0, vmax=vmax0) if vmin0 < 0 < vmax0 else colors.Normalize(vmin=vmin0, vmax=vmax0)
         im0 = ax[0].imshow(
             target_data,
             cmap=cmap,
-            vmin=-std_scale * np.std(target_data),
-            vmax=std_scale * np.std(target_data),
+            norm=norm0,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             interpolation="none",
@@ -1144,11 +1392,12 @@ def plot_denoising_progression(
         ax[0].xaxis.set_major_locator(locator)
         ax[0].xaxis.set_major_formatter(formatter)
 
+        vmin1, vmax1 = -std_scale * np.std(target_a_denoised), std_scale * np.std(target_a_denoised)
+        norm1 = colors.TwoSlopeNorm(vmin=vmin1, vcenter=0.0, vmax=vmax1) if vmin1 < 0 < vmax1 else colors.Normalize(vmin=vmin1, vmax=vmax1)
         im1 = ax[1].imshow(
             target_a_denoised,
             cmap=cmap,
-            vmin=-std_scale * np.std(target_a_denoised),
-            vmax=std_scale * np.std(target_a_denoised),
+            norm=norm1,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             interpolation="none",
@@ -1168,11 +1417,12 @@ def plot_denoising_progression(
         ax[1].xaxis.set_major_locator(locator)
         ax[1].xaxis.set_major_formatter(formatter)
 
+        vmin2, vmax2 = -std_scale * np.std(target_a_e_denoised), std_scale * np.std(target_a_e_denoised)
+        norm2 = colors.TwoSlopeNorm(vmin=vmin2, vcenter=0.0, vmax=vmax2) if vmin2 < 0 < vmax2 else colors.Normalize(vmin=vmin2, vmax=vmax2)
         im2 = ax[2].imshow(
             target_a_e_denoised,
             cmap=cmap,
-            vmin=-std_scale * np.std(target_a_e_denoised),
-            vmax=std_scale * np.std(target_a_e_denoised),
+            norm=norm2,
             aspect="auto",
             extent=[t0, t1, nu_ticks[0], nu_ticks[-1]],
             interpolation="none",
@@ -1200,40 +1450,6 @@ def plot_denoising_progression(
     plt.close()
 
 
-def fold_dynspec(
-    data: np.ndarray, mask: np.ndarray, weights=None, data_axis=1, weight_axis=1
-) -> np.ndarray:
-    """
-    Args:
-        data: 3D array of data (n_pol, n_freq, n_time).
-        mask: 2D array of flagged regions.
-        weights: 3D array of weights that if provided are used for normalisation.
-        normalise: Whether to normalise the data after folding.
-        data_axis: Data axis to fold the data along.
-        weight_axis: Weight axis to fold the weights along.
-    Returns:
-        array of folded data reduced by dimension in which folded
-        and where weights are provided, the propagated error of the folded data
-        calculated as sqrt(variance * weight / sum(weight))
-    """
-    if weights is not None:
-        norm = np.sum(weights, axis=weight_axis)  # non-uniform weights
-        norm = np.where(norm == 0, 1, norm)  # avoid division by zero
-    else:
-        norm = np.count_nonzero(data, axis=data_axis)  # uniform weights
-        norm = np.where(norm == 0, 1, norm)  # avoid division by zero
-
-    mask_norm = np.count_nonzero(mask, axis=0)
-    sum_mask = np.sum(mask, axis=0) / np.where(mask_norm == 0, 1, mask_norm)
-    if not np.all(np.logical_or(sum_mask == 0, sum_mask == 1)):
-        raise ValueError("Mask norm should only contain values 0 or 1")
-
-    std_dev = (np.sqrt(1 / norm)) * sum_mask
-
-    folded_data = (np.sum(data, axis=data_axis)) / norm
-    return folded_data, std_dev
-
-
 def make_kernel(x, l):
     """
     Args:
@@ -1257,7 +1473,7 @@ def convolve(
     t_slice: slice,
     mask: np.ndarray,
     n_threads: int = 32,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Args:
         data: 3D array of data (n_pol, n_freq, n_time).
@@ -1414,14 +1630,18 @@ def get_excess_variance(
     # Add the target data
     onoff_a_whitened[-1, :, :, :] = target_data_a_whitened
 
+    nstack, _, _, _ = onoff_a_whitened.shape
+
     # Convert to Dask array for parallel computation of MAD
-    onoff_a_whitened_dask = da.from_array(onoff_a_whitened, chunks=(1, 1, 1024, 4163))
+    onoff_a_whitened_dask = da.from_array(
+        onoff_a_whitened, chunks=(nstack, "auto", "auto", "auto")
+    )
     onoff_a_whitened_mad = da.median(
         da.abs(onoff_a_whitened_dask - da.median(onoff_a_whitened_dask, axis=0)), axis=0
     ).compute()
     # Normalize the MAD to be equivalent to scipy.stats.median_abs_deviation with scale='normal'
-    onoff_a_whitened_mad /= 0.6745
-    var_e = np.power(onoff_a_whitened_mad, 2)
+    onoff_a_sigma = onoff_a_whitened_mad / 0.6745
+    var_e = np.power(onoff_a_sigma, 2)
     return var_e
 
 

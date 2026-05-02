@@ -58,6 +58,10 @@ cabs:
         dtype: bool
         info: "Plot the data in a format suitable for publication"
         default: false
+      zero-vcenter:
+        dtype: bool
+        info: "Set vcenter to zero instead of the mean of the data"
+        default: false
       dpi:
         dtype: int
         info: "DPI of the output plots. Default 300."
@@ -76,7 +80,7 @@ cabs:
         info: "Calculate polarisation power (Q^2 + U^2 + V^2) before smoothing."
         default: false
       calc-rm-synth:
-        info: "Calculate RM synthesis with phi params: [phi_min, phi_max, n_phi]. E.g. rm-synth=[-100,100,256]"
+        info: "Calculate RM synthesis with phi params: [phi_min, phi_max, n_phi]. E.g. calc-rm-synth=[-100,100,256]"
         dtype: List[int]
         required: false
         policies:
@@ -95,6 +99,37 @@ cabs:
         dtype: bool
         info: "Enable verbose console output"
         default: false
+      use-gpr:
+        dtype: bool
+        info: "Use Gaussian Process Regression (GPR) smoothing instead of standard convolution. If not specified, defaults to False and all gpr parameters are ignored."
+        required: false
+      gpr-jitter:
+        dtype: float
+        default: 1e-8
+        info: "Jitter term added to the diagonal of the covariance matrix in GPR to improve numerical stability. Default is 1e-8."
+        required: false
+      gpr-tolerance:
+        dtype: float
+        default: 1e-4
+        info: "Tolerance for the conjugate gradient solver in GPR. Default is 1e-4."
+        required: false
+      gpr-patience:
+        dtype: int
+        default: 3
+        info: "Patience for the conjugate gradient solver in GPR. Default is 3."
+        required: false
+      gpr-maxiter:
+        dtype: int
+        info: "Maximum iterations for the conjugate gradient solver in GPR. Default is None."
+        required: false
+      gpr-samples:
+        dtype: int
+        default: 25
+        info: "Number of samples to use for GPR variance estimate. Default is 25."
+        required: false
+
+
+      
 
     outputs:
       output:
