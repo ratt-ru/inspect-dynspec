@@ -246,7 +246,7 @@ def inspect_dynspec(
             )
             vminmax = (0, 1)
             plot_dynspec(
-                data=nanmask,
+                data=mask_nan,
                 output=mask_plot_name,
                 t_ticks=t_ticks,
                 nu_ticks=nu_ticks,
