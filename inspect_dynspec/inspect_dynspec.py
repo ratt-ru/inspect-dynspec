@@ -149,14 +149,55 @@ def inspect_dynspec(
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
 
-        stokes_indices = [i for i, char in enumerate(STOKES_LABELS) if char in stokes]
-        if stokes_indices:
-            stokes_slice = np.array(stokes_indices, dtype=int)
+        with fits.open(paths["target"]["data"][target]) as hdul:
+            temp_header = hdul[0].header
+        
+        #check exactly how many polarisations exist in the FITS file
+        naxis3 = temp_header.get('NAXIS3', 1)
+        ctype3 = temp_header.get('CTYPE3', '')
+        fits_stokes_map = {}
+        
+        if '=' in ctype3:
+            parts = ctype3.split(',')
+            for p in parts:
+                if '=' in p:
+                    idx_str, stokes_char = p.split('=')
+                    fits_stokes_map[stokes_char.strip()] = int(idx_str.strip()) - 1
         else:
+            #fallback mapping (standard IQUV order)
+            default_order = ['I', 'Q', 'U', 'V']
+            for i in range(min(naxis3, len(default_order))):
+                fits_stokes_map[default_order[i]] = i
+
+        internal_stokes_slice = []
+        fits_stokes_slice = []
+        missing_stokes = []
+        
+        for char in stokes:
+            if char in STOKES_LABELS and char in fits_stokes_map:
+                if fits_stokes_map[char] < naxis3:
+                    internal_stokes_slice.append(STOKES_LABELS.index(char))
+                    fits_stokes_slice.append(fits_stokes_map[char])
+                else:
+                    missing_stokes.append(char)
+            elif char in STOKES_LABELS:
+                missing_stokes.append(char)
+        
+        if missing_stokes:
+            available_stokes = "".join(fits_stokes_map.keys())
+            requested_missing = "".join(missing_stokes)
             LOGGER.error(
-                "Invalid Stokes parameters. Please provide any combination of 'I', 'Q', 'U', 'V'."
+                f"FITS file only has Stokes {available_stokes}, "
+                f"cannot compute requested Stokes {requested_missing}. Skipping target."
             )
-            return
+            continue
+        
+        if not internal_stokes_slice:
+            LOGGER.error("None of the requested Stokes parameters are valid. Skipping target.")
+            continue
+
+        stokes_slice = np.array(internal_stokes_slice, dtype=int)
+        fits_stokes_slice = np.array(fits_stokes_slice, dtype=int)
 
         nu_slice = slice(nu_bounds[0], None if nu_bounds[1] == -1 else nu_bounds[1] + 1)
         t_slice = slice(t_bounds[0], None if t_bounds[1] == -1 else t_bounds[1] + 1)
@@ -165,7 +206,7 @@ def inspect_dynspec(
         target_data, target_header, target_weights, target_weights2 = (
             fetch_fits_and_weights_dask(
                 paths,
-                stokes_slice,
+                fits_stokes_slice, 
                 nu_slice,
                 t_slice,
                 off_target=False,
@@ -291,7 +332,7 @@ def inspect_dynspec(
         """
         if nof_off_targets != 0:
             var_e = get_excess_variance(
-                target_data_a_whitened, paths, stokes_slice, nu_slice, t_slice
+                target_data_a_whitened, paths, fits_stokes_slice, nu_slice, t_slice
             )
             var = var_a * var_e
             wgt = (1 / np.where(var == 0, 1, var)) * mask
