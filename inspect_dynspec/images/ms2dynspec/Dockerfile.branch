@@ -1,35 +1,24 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # Set the non-interactive mode for apt-get
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies and add the deadsnakes PPA
+# Install dependencies
 RUN apt-get update && apt-get install -y \
-    software-properties-common \
-    git \
-    curl \
-    && add-apt-repository ppa:deadsnakes/ppa
-
-# Install Python 3.12 and other essential packages
-RUN apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-venv \
-    python3.12-dev \
+    python3 \
+    python3-venv \
+    python3-dev \
+    python3-pip \
     cmake \
     gcc \
     g++ \
     libfftw3-dev \
+    git \
+    curl \
     && apt-get clean
 
-RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.12 get-pip.py && \
-    rm get-pip.py
-
-# Update alternatives to set Python 3.12 as the default
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3 1 \
-    && update-alternatives --set python3 /usr/bin/python3.12 \
-    && update-alternatives --set python /usr/bin/python3
+# Update alternatives so `python` points to `python3`
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 RUN mkdir -p /faux_home/measures && \
     curl ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar | tar xvzf - -C /faux_home/measures && \
@@ -37,19 +26,22 @@ RUN mkdir -p /faux_home/measures && \
 
 ENV CASARCFILES=/faux_home/.casarc
 
-RUN python -mpip install --no-cache-dir --upgrade pip wheel
+# Bypass PEP 668 externally managed environment restriction in Ubuntu 24.04
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-RUN git clone https://github.com/talonmyburgh/DDFacet.git && \
+RUN python -m pip install --no-cache-dir wheel
+
+RUN git clone https://github.com/saopicc/DDFacet.git && \
     cd DDFacet && \
-    git checkout SSD3NancepMPI && \
+    git checkout MassiveMerge_PR_Py3.12 && \
     cd .. && \
-    python -mpip install ./DDFacet
+    python -m pip install ./DDFacet
 
 # Install meqtrees-cattery
-RUN python -mpip install --no-cache-dir "meqtrees-cattery"
+RUN python -m pip install --no-cache-dir "meqtrees-cattery"
 
 # Install DynSpecMS from the specified GitHub repository
-RUN python -mpip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_jax"
+RUN python -m pip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_nojax"
 
 # set XDG cache (normally ~/.cache)
 ENV XDG_CACHE_HOME /var/cache
