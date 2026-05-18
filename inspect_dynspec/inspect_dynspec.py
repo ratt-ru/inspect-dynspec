@@ -29,13 +29,61 @@ def convert_tuple_to_list_of_lists(input_tuple):
     """
     Converts a tuple of strings representing lists into a list of lists.
     Args:
-        input_tuple: Tuple of strings, e.g., ('[1,1]', '[2,2]')
+        input_tuple: Tuple of strings, e.g., ('[1,1]', '[35,:]')
     Returns:
-        List of lists, e.g., [[1, 1], [2, 2]]
+        List of lists, e.g., [[1.0, 1.0], [35.0, None]]
     """
-    return [
-        list(map(float, re.findall(r"[-+]?\d*\.\d+|\d+", item))) for item in input_tuple
-    ]
+    result = []
+    for item in input_tuple:
+        # e.g., '[35, :]' -> '35, :'
+        cleaned = item.strip('[]() ')
+        parts = cleaned.split(',')
+        if len(parts) == 2:
+            try:
+                p0 = float(parts[0]) if parts[0].strip() and parts[0].strip() != ':' else None
+            except ValueError:
+                p0 = None
+            try:
+                p1 = float(parts[1]) if parts[1].strip() and parts[1].strip() != ':' else None
+            except ValueError:
+                p1 = None
+            result.append([p0, p1])
+        else:
+            nums = re.findall(r"[-+]?\d*\.\d+|\d+", item)
+            if len(nums) >= 2:
+                result.append([float(nums[0]), float(nums[1])])
+    return result
+
+def calculate_circular_kernel(
+    nu_delta: Optional[float], 
+    t_delta: Optional[float], 
+    target_header: fits.header.Header
+) -> Tuple[float, float]:
+    """
+    Calculates the missing kernel dimension to enforce a circular kernel 
+    based on the dataset's aspect ratio.
+    """
+    if nu_delta is not None and t_delta is not None:
+        return nu_delta, t_delta
+        
+    n_freq = target_header.get("NAXIS2", 1)
+    n_time = target_header.get("NAXIS1", 1)
+    delta_time = target_header.get("CDELT1", 1.0)
+    delta_freq = target_header.get("CDELT2", 1.0)
+    
+    phys_extent_freq = n_freq * abs(delta_freq)
+    phys_extent_time = n_time * abs(delta_time)
+    
+    if nu_delta is not None and t_delta is None:
+        t_delta = nu_delta * (phys_extent_time / phys_extent_freq)
+        LOGGER.info(f"Calculated perfectly circular kernel size: nu_delta={nu_delta:.4f}, calculated t_delta={t_delta:.4f}")
+    elif t_delta is not None and nu_delta is None:
+        nu_delta = t_delta * (phys_extent_freq / phys_extent_time)
+        LOGGER.info(f"Calculated perfectly circular kernel size: calculated nu_delta={nu_delta:.4f}, t_delta={t_delta:.4f}")
+    else:
+        nu_delta, t_delta = 1.0, 1.0
+        
+    return float(nu_delta), float(t_delta)
 
 
 # Function to find a valid input directory containing TARGET and TARGET_W subdirectories
@@ -475,7 +523,7 @@ def inspect_dynspec(
         ################### ITERATE THROUGH PROVIDED KERNELS #################################
         """
         for k_width in kernel:
-            nu_delta, t_delta = k_width
+            nu_delta, t_delta = calculate_circular_kernel(k_width[0], k_width[1], temp_header)
             kern_str = rf"$\Delta\nu={np.round(nu_delta)}$MHz and $\Delta t={np.round(t_delta)}$s"
 
             smoothed_target_data_var_normalised = np.zeros_like(target_data_var_normalised)
@@ -578,7 +626,7 @@ def inspect_dynspec(
                     )
                     gprjy_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Jy.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_Jy.png",
                     )
                     x_map_nan = x_map * mask_nan
                     vminmax, vcenter = determine_vminmaxcenter(
@@ -609,7 +657,7 @@ def inspect_dynspec(
                     )
                     gprsnr_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_SNR.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_SNR.png",
                     )
                     vminmax, vcenter = determine_vminmaxcenter(
                         x_map_snr, std_scale, zero_vcenter=zero_vcenter
@@ -637,7 +685,7 @@ def inspect_dynspec(
                     )
                     gprlcsnr_plotname = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
                     )
                     plot_light_curve_with_errors(
                         lc_snr_masked,
@@ -662,7 +710,7 @@ def inspect_dynspec(
                         )
                         gprvar_plotname = os.path.join(
                             output_dir,
-                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_GPR_smoothed_variance.png",
+                            f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_variance.png",
                         )
                         plot_dynspec(
                             data=x_n_var,
@@ -707,7 +755,7 @@ def inspect_dynspec(
                     )
                     sdata_plot_name = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{int(nu_delta)}MHz_{int(t_delta)}s_convolve_Jy.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_convolve_Jy.png",
                     )
                     vminmax, vcenter = determine_vminmaxcenter(
                         sdata[stx_idx, :, :], std_scale, zero_vcenter=zero_vcenter
@@ -761,7 +809,7 @@ def inspect_dynspec(
                     )
                     rmsynth_plot_name = os.path.join(
                         output_dir,
-                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_rm_synth_{int(nu_delta)}MHz_{int(t_delta)}s.png",
+                        f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_rm_synth_{np.round(nu_delta)}MHz_{np.round(t_delta)}s.png",
                     )
                     vminmax = (
                         None,
