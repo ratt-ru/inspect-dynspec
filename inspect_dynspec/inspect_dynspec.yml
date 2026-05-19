@@ -16,7 +16,6 @@ cabs:
       kernel:
         info: "Smoothing kernel FWHM size as tuples: (nu_delta (MHz), t_delta (s)) i.e. stimela run inspect_dynspec.yml kernel=[[2,3],[3,:]]. Where one aspect of the kernel is left blank, it is calculated so as to provide a circular kernel in index space. If both aspects are left blank, defaults to (1,1) in index space."
         dtype: List[Tuple[str,str]]
-        required: false
         default: [1,1]
         policies:
           repeat: repeat
@@ -25,31 +24,26 @@ cabs:
         dtype: List[int]
         info: "Frequency range to consider in index units. Default: 0 -1"
         default : [0,-1]
-        required: false
         policies:
           repeat: '[]'
       t-bounds:
         dtype: List[int]
         info: "Time range to consider in index units. Default: 0 -1"
         default : [0,-1]
-        required: false
         policies:
           repeat: '[]'
       n-threads:
         dtype: int
         info: "Number of threads to use for FFT operations. Default 32."
         default: 32
-        required: false
       stokes:
         dtype: str
         info: "Stokes parameter to consider. Provide string with any of I, Q, U, V. Eg: IV"
         default: "IQUV"
-        required: false
       std-scale:
         dtype: float 
         info: "Plot saturates at std_scale * std(data) in plots"
         default: 2.0
-        required: false
       debug:
         dtype: bool
         info: "Produce a plot of all terms for debugging purposes"
@@ -66,7 +60,6 @@ cabs:
         dtype: int
         info: "DPI of the output plots. Default 300."
         default: 300
-        required: false
       calc-circular-pol:
         dtype: bool
         info: "Calculate circular polarisation fraction V/I before smoothing."
@@ -82,18 +75,15 @@ cabs:
       calc-rm-synth:
         info: "Calculate RM synthesis with phi params: [phi_min, phi_max, n_phi]. E.g. calc-rm-synth=[-100,100,256]"
         dtype: List[int]
-        required: false
         policies:
           repeat: '[]'
       zero-sub-value-tolerance:
         dtype: float
         info: "Circular and linear polarization fractions require division by I. To avoid divide by zero issues, values within 0 ± tolerance are substituted for this tolerance value."
-        required: false
         default: 1e-4
       cmap:
         dtype: str
         info: "Colormap to use for plotting. Default is RdYlBu_r."
-        required: false
         default: "RdYlBu_r"
       verbose:
         dtype: bool
@@ -102,31 +92,26 @@ cabs:
       use-gpr:
         dtype: bool
         info: "Use Gaussian Process Regression (GPR) smoothing instead of standard convolution. If not specified, defaults to False and all gpr parameters are ignored."
-        required: false
+        default: false
       gpr-jitter:
         dtype: float
         default: 1e-8
         info: "Jitter term added to the diagonal of the covariance matrix in GPR to improve numerical stability. Default is 1e-8."
-        required: false
       gpr-tolerance:
         dtype: float
         default: 1e-4
         info: "Tolerance for the conjugate gradient solver in GPR. Default is 1e-4."
-        required: false
       gpr-patience:
         dtype: int
         default: 3
         info: "Patience for the conjugate gradient solver in GPR. Default is 3."
-        required: false
       gpr-maxiter:
-        dtype: int
+        dtype: Optional[int]
         info: "Maximum iterations for the conjugate gradient solver in GPR. Default is None."
-        required: false
       gpr-samples:
         dtype: int
         default: 25
         info: "Number of samples to use for GPR variance estimate. Default is 25."
-        required: false
 
 
       
@@ -135,5 +120,4 @@ cabs:
       output:
         info: "Output path. If does not exist, it will be created"
         dtype: Directory
-        required: true
         must_exist: false
