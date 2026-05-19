@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     && apt-get clean
 
-# Update alternatives so `python` points to `python3`
+# Update alternatives so python points to python3
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 RUN mkdir -p /faux_home/measures && \
@@ -26,7 +26,6 @@ RUN mkdir -p /faux_home/measures && \
 
 ENV CASARCFILES=/faux_home/.casarc
 
-# Bypass PEP 668 externally managed environment restriction in Ubuntu 24.04
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN python -m pip install --no-cache-dir wheel
