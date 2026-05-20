@@ -1640,9 +1640,9 @@ def convolve(
     lt = t_delta / t.max() / 3600
     t /= t.max()
 
-    # Determine the padding size - same size as kernel
-    pad_t = int(t_delta)
-    pad_nu = int(nu_delta)
+    # Determine the padding size - same size as kernel but in units of pixels.
+    pad_t = int(np.ceil(t_delta / delta_time))
+    pad_nu = int(np.ceil(nu_delta / delta_freq))
 
     kt = make_kernel(t, lt)
     kv = make_kernel(nu, lnu)
