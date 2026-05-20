@@ -223,15 +223,6 @@ def inspect_dynspec(
     os.makedirs(output, exist_ok=True)
     LOGGER.info(f"Output directory: {output}")
 
-    # Write the run summary to last_run.json
-    last_run_path = os.path.join(output, "last_run_inspect_params.json")
-    try:
-        with open(last_run_path, "w") as f:
-            json.dump(run_args, f, indent=4)
-        LOGGER.info(f"Wrote run arguments to {last_run_path} for freshness checking")
-    except Exception as e:
-        LOGGER.warning(f"Could not write run summary to {last_run_path}: {e}")
-
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
 
@@ -873,6 +864,15 @@ def inspect_dynspec(
                         return_plot=False,
                     )
                     LOGGER.info(f"Wrote rm synth smoothed plot to {rmsynth_plot_name}")
+    
+    # Write the run summary to last_run.json
+    last_run_path = os.path.join(output, "last_run_inspect_params.json")
+    try:
+        with open(last_run_path, "w") as f:
+            json.dump(run_args, f, indent=4)
+        LOGGER.info(f"Wrote run arguments to {last_run_path}")
+    except Exception as e:
+        LOGGER.warning(f"Could not write run summary to {last_run_path}: {e}")
 
 
 @delayed
