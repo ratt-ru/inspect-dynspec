@@ -190,9 +190,8 @@ def inspect_dynspec(
         )
 
     # Create output directory if it does not exist
-    output_dir = os.path.abspath(os.path.join(os.path.abspath(root), output))
-    os.makedirs(output_dir, exist_ok=True)
-    LOGGER.info(f"Output directory: {output_dir}")
+    os.makedirs(output, exist_ok=True)
+    LOGGER.info(f"Output directory: {output}")
 
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
@@ -280,7 +279,7 @@ def inspect_dynspec(
 
         if debug:
             t_weight_plot_name = os.path.join(
-                output_dir, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W.png"
+                output, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W.png"
             )
             LOGGER.info(f"Plotting target weights to {t_weight_plot_name}")
             t_weight_title = f"Target weights (W) for {name_str}\nat {coord_str}"
@@ -301,7 +300,7 @@ def inspect_dynspec(
             )
             LOGGER.info(f"Wrote W weights plot to {t_weight_plot_name}")
             t2weight_plot_name = os.path.join(
-                output_dir, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W2.png"
+                output, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W2.png"
             )
             t2weight_title = f"Target weights (W2) for {name_str}\nat {coord_str}"
             vminmax = (
@@ -330,7 +329,7 @@ def inspect_dynspec(
         if debug:
             mask_title = f"Flagged regions for {name_str}\nat {coord_str}"
             mask_plot_name = os.path.join(
-                output_dir,
+                output,
                 f"{name_str.replace(' ', '_')}_{target_header['RA_RAD']}_{target_header['DEC_RAD']}_flagged_regions.png",
             )
             vminmax = (0, 1)
@@ -357,7 +356,7 @@ def inspect_dynspec(
         LOGGER.info("Completed analytical denoising")
         if debug:
             var_a_plot_name = os.path.join(
-                output_dir,
+                output,
                 f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_var_a.png",
             )
             var_a_title = f"Analytical variance for {name_str}\nat {coord_str}"
@@ -397,7 +396,7 @@ def inspect_dynspec(
             for stx_idx, stx in enumerate(stokes_slice):
                 stx_str = STOKES_NAMES[stx]
                 denoise_prog_name = os.path.join(
-                    output_dir,
+                    output,
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_denoise_progression.png",
                 )
                 denoise_title = f"{name_str} {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
@@ -419,7 +418,7 @@ def inspect_dynspec(
                 )
 
                 var_e_plot_name = os.path.join(
-                    output_dir,
+                    output,
                     f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_var_e.png",
                 )
                 var_e_title = (
@@ -625,7 +624,7 @@ def inspect_dynspec(
                         else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                     )
                     gprjy_plotname = os.path.join(
-                        output_dir,
+                        output,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_Jy.png",
                     )
                     x_map_nan = x_map * mask_nan
@@ -656,7 +655,7 @@ def inspect_dynspec(
                         else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                     )
                     gprsnr_plotname = os.path.join(
-                        output_dir,
+                        output,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_SNR.png",
                     )
                     vminmax, vcenter = determine_vminmaxcenter(
@@ -684,7 +683,7 @@ def inspect_dynspec(
                         else f"GPR smoothed, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                     )
                     gprlcsnr_plotname = os.path.join(
-                        output_dir,
+                        output,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_Lightcurve_SNR.png",
                     )
                     plot_light_curve_with_errors(
@@ -709,7 +708,7 @@ def inspect_dynspec(
                             else f"Variance of GPR samples, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                         )
                         gprvar_plotname = os.path.join(
-                            output_dir,
+                            output,
                             f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_GPR_smoothed_variance.png",
                         )
                         plot_dynspec(
@@ -754,7 +753,7 @@ def inspect_dynspec(
                         else f"Analytically and excess denoised, stokes {stx_str}\nfor {name_str} at {coord_str} with kernel {kern_str}"
                     )
                     sdata_plot_name = os.path.join(
-                        output_dir,
+                        output,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_{np.round(nu_delta)}MHz_{np.round(t_delta)}s_convolve_Jy.png",
                     )
                     vminmax, vcenter = determine_vminmaxcenter(
@@ -808,7 +807,7 @@ def inspect_dynspec(
                         else f"RM Synthesis for {name_str}\nat {coord_str} with kernel {kern_str}"
                     )
                     rmsynth_plot_name = os.path.join(
-                        output_dir,
+                        output,
                         f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_rm_synth_{np.round(nu_delta)}MHz_{np.round(t_delta)}s.png",
                     )
                     vminmax = (
