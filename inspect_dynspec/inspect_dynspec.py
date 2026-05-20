@@ -19,10 +19,30 @@ import click
 import os
 import re
 import glob
+import json
 from omegaconf import OmegaConf
 from . import LOGGER, set_console_logging_level
 from art import text2art
 from .gpr_smooth import gpr_smooth, fit_hyperplane
+
+
+def robust_std(data: np.ndarray) -> float:
+    """
+    Calculate a robust standard deviation using the Median Absolute Deviation (MAD).
+    Scaled by 1.4826 to match the standard deviation of a normal distribution.
+    Args:
+        data: Input data array
+    Returns:
+        Robust standard deviation estimate
+    """
+    median = np.nanmedian(data)
+    mad = np.nanmedian(np.abs(data - median))
+    r_std = mad * 1.4826
+    
+    if r_std == 0:
+        r_std = np.nanstd(data)
+        
+    return r_std
 
 
 def convert_tuple_to_list_of_lists(input_tuple):
@@ -98,16 +118,26 @@ def find_valid_root(input: str) -> str:
 
 
 def determine_vminmaxcenter(
-    data: np.ndarray, std_scale: float, zero_vcenter
+    data: np.ndarray, std_scale: float, zero_vcenter: bool
 ) -> Tuple[Tuple[float, float], float]:
-    if np.isnan(data).any():
-        vmin = -std_scale * np.nanstd(data)
-        vmax = std_scale * np.nanstd(data)
-        vcenter = 0.0 if zero_vcenter else np.nanmean(data)
-    else:
-        vmin = -std_scale * np.std(data)
-        vmax = std_scale * np.std(data)
-        vcenter = 0.0 if zero_vcenter else np.mean(data)
+    """
+    Determine vmin, vmax and vcenter for plotting the smoothed data, using a robust standard deviation estimate to set the scale.
+    The vmin and vmax are set to be symmetric around the vcenter, which is either 0 or the median of the data.
+    Args:
+        data: 2D array of the smoothed data to be plotted
+        std_scale: Scale factor for the robust standard deviation to determine vmin and vmax
+        zero_vcenter: If True, set vcenter to 0. If False, set vcenter to the median of the data.
+    Returns:
+    A tuple containing:
+        - vmin and vmax as a tuple of floats
+        - vcenter as a float
+    """
+    r_std = robust_std(data)
+    
+    vmin = -std_scale * r_std
+    vmax = std_scale * r_std
+    vcenter = 0.0 if zero_vcenter else np.nanmedian(data)
+    
     return (float(vmin), float(vmax)), float(vcenter)
 
 
@@ -144,7 +174,7 @@ def inspect_dynspec(
     gpr_maxiter: int,
     gpr_samples: int,
 ) -> None:
-
+    run_args = locals().copy() # grab args before they're modified
     script_name = text2art("Inspect Dynspec")
     description = "Dynamic spectra denoising and smoothing for DynSpecMS products"
     print(script_name)
@@ -192,6 +222,15 @@ def inspect_dynspec(
     # Create output directory if it does not exist
     os.makedirs(output, exist_ok=True)
     LOGGER.info(f"Output directory: {output}")
+
+    # Write the run summary to last_run.json
+    last_run_path = os.path.join(output, "last_run_inspect_params.json")
+    try:
+        with open(last_run_path, "w") as f:
+            json.dump(run_args, f, indent=4)
+        LOGGER.info(f"Wrote run arguments to {last_run_path} for freshness checking")
+    except Exception as e:
+        LOGGER.warning(f"Could not write run summary to {last_run_path}: {e}")
 
     # Start major loop to iterate through targets:
     for target in range(nof_targets):
@@ -408,6 +447,7 @@ def inspect_dynspec(
                     nu_ticks,
                     denoise_prog_name,
                     std_scale,
+                    zero_vcenter,
                     dpi,
                     cmap,
                     title=denoise_title,
@@ -1410,6 +1450,7 @@ def plot_denoising_progression(
     nu_ticks: np.ndarray,
     output: str,
     std_scale: float,
+    zero_vcenter: bool,
     dpi: int,
     cmap: str,
     title: str = "",
@@ -1426,6 +1467,7 @@ def plot_denoising_progression(
         nu_ticks: Frequency ticks for the y-axis
         output: Output file name
         std_scale: Plot saturates at std_scale * std(data) in plots
+        zero_vcenter: Whether to set the center of the colorbar to 0 or not (if False, center is set to mean of data)
         dpi: DPI of the output plots
         cmap: Colormap to use for plotting
         title: Title of the plot
@@ -1455,8 +1497,8 @@ def plot_denoising_progression(
         1, 3, figsize=(fig_w, fig_h), sharex=True, sharey=True, constrained_layout=True
     )
     with time_support(simplify=True):
-        vmin0, vmax0 = -std_scale * np.std(target_data), std_scale * np.std(target_data)
-        norm0 = colors.TwoSlopeNorm(vmin=vmin0, vcenter=0.0, vmax=vmax0) if vmin0 < 0 < vmax0 else colors.Normalize(vmin=vmin0, vmax=vmax0)
+        vminmax0, vcenter0 = determine_vminmaxcenter(target_data, std_scale, zero_vcenter)
+        norm0 = colors.TwoSlopeNorm(vmin=vminmax0[0], vcenter=vcenter0, vmax=vminmax0[1]) if vminmax0[0] < vcenter0 < vminmax0[1] else colors.Normalize(vmin=vminmax0[0], vmax=vminmax0[1])
         im0 = ax[0].imshow(
             target_data,
             cmap=cmap,
@@ -1480,8 +1522,8 @@ def plot_denoising_progression(
         ax[0].xaxis.set_major_locator(locator)
         ax[0].xaxis.set_major_formatter(formatter)
 
-        vmin1, vmax1 = -std_scale * np.std(target_a_denoised), std_scale * np.std(target_a_denoised)
-        norm1 = colors.TwoSlopeNorm(vmin=vmin1, vcenter=0.0, vmax=vmax1) if vmin1 < 0 < vmax1 else colors.Normalize(vmin=vmin1, vmax=vmax1)
+        vminmax1, vcenter1 = determine_vminmaxcenter(target_a_denoised, std_scale, zero_vcenter)
+        norm1 = colors.TwoSlopeNorm(vmin=vminmax1[0], vcenter=vcenter1, vmax=vminmax1[1]) if vminmax1[0] < vcenter1 < vminmax1[1] else colors.Normalize(vmin=vminmax1[0], vmax=vminmax1[1])
         im1 = ax[1].imshow(
             target_a_denoised,
             cmap=cmap,
@@ -1505,8 +1547,8 @@ def plot_denoising_progression(
         ax[1].xaxis.set_major_locator(locator)
         ax[1].xaxis.set_major_formatter(formatter)
 
-        vmin2, vmax2 = -std_scale * np.std(target_a_e_denoised), std_scale * np.std(target_a_e_denoised)
-        norm2 = colors.TwoSlopeNorm(vmin=vmin2, vcenter=0.0, vmax=vmax2) if vmin2 < 0 < vmax2 else colors.Normalize(vmin=vmin2, vmax=vmax2)
+        vminmax2, vcenter2 = determine_vminmaxcenter(target_a_e_denoised, std_scale, zero_vcenter)
+        norm2 = colors.TwoSlopeNorm(vmin=vminmax2[0], vcenter=vcenter2, vmax=vminmax2[1]) if vminmax2[0] < vcenter2 < vminmax2[1] else colors.Normalize(vmin=vminmax2[0], vmax=vminmax2[1])
         im2 = ax[2].imshow(
             target_a_e_denoised,
             cmap=cmap,

@@ -43,7 +43,7 @@ cabs:
       std-scale:
         dtype: float 
         info: "Plot saturates at std_scale * std(data) in plots"
-        default: 2.0
+        default: 4.0
       debug:
         dtype: bool
         info: "Produce a plot of all terms for debugging purposes"
