@@ -117,6 +117,28 @@ def find_valid_root(input: str) -> str:
     )
 
 
+@delayed
+def compute_target_variance_delayed(fetched_data, precomputed_off_whitened):
+    """Computes var_a and var_e for a single target in a delayed Dask thread."""
+    target_data, target_header, target_weights, target_weights2 = fetched_data
+    
+    #Analytical variance (var_a) - STRICTLY SPECIFIC TO A TARGET
+    var_a = get_analytical_variance(target_weights, target_weights2)
+    target_data_a_whitened = target_data / np.sqrt(np.where(var_a == 0, 1, var_a))
+
+    #Excess variance (var_e) - GENERALIZED ACROSS OFF-TARGETS + THIS TARGET
+    if precomputed_off_whitened:
+        onoff_a_whitened = np.stack(precomputed_off_whitened + [target_data_a_whitened], axis=0)
+        
+        onoff_mad = np.median(np.abs(onoff_a_whitened - np.median(onoff_a_whitened, axis=0)), axis=0)
+        onoff_a_sigma = onoff_mad / 0.6745
+        var_e = np.power(onoff_a_sigma, 2)
+    else:
+        var_e = None
+
+    return target_data, target_header, target_weights, target_weights2, var_a, target_data_a_whitened, var_e
+
+
 def determine_vminmaxcenter(
     data: np.ndarray, std_scale: float, zero_vcenter: bool
 ) -> Tuple[Tuple[float, float], float]:
@@ -176,7 +198,7 @@ def inspect_dynspec(
 ) -> None:
     run_args = locals().copy() # grab args before they're modified
     script_name = text2art("Inspect Dynspec")
-    description = "Dynamic spectra denoising and smoothing for DynSpecMS products"
+    description = "Dynamic spectra denoising and smoothing for RIMS products"
     print(script_name)
     print(description)
 
@@ -223,73 +245,90 @@ def inspect_dynspec(
     os.makedirs(output, exist_ok=True)
     LOGGER.info(f"Output directory: {output}")
 
-    # Start major loop to iterate through targets:
-    for target in range(nof_targets):
+    # DETERMINE SLICES FROM FIRST TARGET ONCE
+    with fits.open(paths["target"]["data"][0]) as hdul:
+        temp_header = hdul[0].header
+    
+    naxis3 = temp_header.get('NAXIS3', 1)
+    ctype3 = temp_header.get('CTYPE3', '')
+    fits_stokes_map = {}
+    
+    if '=' in ctype3:
+        parts = ctype3.split(',')
+        for p in parts:
+            if '=' in p:
+                idx_str, stokes_char = p.split('=')
+                fits_stokes_map[stokes_char.strip()] = int(idx_str.strip()) - 1
+    else:
+        default_order = ['I', 'Q', 'U', 'V']
+        for i in range(min(naxis3, len(default_order))):
+            fits_stokes_map[default_order[i]] = i
 
-        with fits.open(paths["target"]["data"][target]) as hdul:
-            temp_header = hdul[0].header
-        
-        #check exactly how many polarisations exist in the FITS file
-        naxis3 = temp_header.get('NAXIS3', 1)
-        ctype3 = temp_header.get('CTYPE3', '')
-        fits_stokes_map = {}
-        
-        if '=' in ctype3:
-            parts = ctype3.split(',')
-            for p in parts:
-                if '=' in p:
-                    idx_str, stokes_char = p.split('=')
-                    fits_stokes_map[stokes_char.strip()] = int(idx_str.strip()) - 1
-        else:
-            #fallback mapping (standard IQUV order)
-            default_order = ['I', 'Q', 'U', 'V']
-            for i in range(min(naxis3, len(default_order))):
-                fits_stokes_map[default_order[i]] = i
-
-        internal_stokes_slice = []
-        fits_stokes_slice = []
-        missing_stokes = []
-        
-        for char in stokes:
-            if char in STOKES_LABELS and char in fits_stokes_map:
-                if fits_stokes_map[char] < naxis3:
-                    internal_stokes_slice.append(STOKES_LABELS.index(char))
-                    fits_stokes_slice.append(fits_stokes_map[char])
-                else:
-                    missing_stokes.append(char)
-            elif char in STOKES_LABELS:
+    internal_stokes_slice = []
+    fits_stokes_slice = []
+    missing_stokes = []
+    
+    for char in stokes:
+        if char in STOKES_LABELS and char in fits_stokes_map:
+            if fits_stokes_map[char] < naxis3:
+                internal_stokes_slice.append(STOKES_LABELS.index(char))
+                fits_stokes_slice.append(fits_stokes_map[char])
+            else:
                 missing_stokes.append(char)
-        
-        if missing_stokes:
-            available_stokes = "".join(fits_stokes_map.keys())
-            requested_missing = "".join(missing_stokes)
-            LOGGER.error(
-                f"FITS file only has Stokes {available_stokes}, "
-                f"cannot compute requested Stokes {requested_missing}. Skipping target."
-            )
-            continue
-        
-        if not internal_stokes_slice:
-            LOGGER.error("None of the requested Stokes parameters are valid. Skipping target.")
-            continue
-
-        stokes_slice = np.array(internal_stokes_slice, dtype=int)
-        fits_stokes_slice = np.array(fits_stokes_slice, dtype=int)
-
-        nu_slice = slice(nu_bounds[0], None if nu_bounds[1] == -1 else nu_bounds[1] + 1)
-        t_slice = slice(t_bounds[0], None if t_bounds[1] == -1 else t_bounds[1] + 1)
-
-        # target_data in Jy
-        target_data, target_header, target_weights, target_weights2 = (
-            fetch_fits_and_weights_dask(
-                paths,
-                fits_stokes_slice, 
-                nu_slice,
-                t_slice,
-                off_target=False,
-                index=target,
-            ).compute()
+        elif char in STOKES_LABELS:
+            missing_stokes.append(char)
+    
+    if missing_stokes:
+        available_stokes = "".join(fits_stokes_map.keys())
+        requested_missing = "".join(missing_stokes)
+        LOGGER.error(
+            f"FITS files only have Stokes {available_stokes}, "
+            f"cannot compute requested Stokes {requested_missing}. Exiting."
         )
+        return
+    
+    if not internal_stokes_slice:
+        LOGGER.error("None of the requested Stokes parameters are valid. Exiting.")
+        return
+
+    stokes_slice = np.array(internal_stokes_slice, dtype=int)
+    fits_stokes_slice = np.array(fits_stokes_slice, dtype=int)
+
+    nu_slice = slice(nu_bounds[0], None if nu_bounds[1] == -1 else nu_bounds[1] + 1)
+    t_slice = slice(t_bounds[0], None if t_bounds[1] == -1 else t_bounds[1] + 1)
+
+    #PRE-COMPUTE KERNELS ONCE
+    explicit_kernels = []
+    for k_width in kernel:
+        nu_delta, t_delta = calculate_circular_kernel(k_width[0], k_width[1], temp_header)
+        explicit_kernels.append([nu_delta, t_delta])
+    kernel = explicit_kernels
+
+    # PRE-COMPUTE OFF-TARGETS IN PARALLEL
+    precomputed_off_whitened = []
+    if nof_off_targets > 0:
+        LOGGER.info("Pre-computing off-target variances in parallel...")
+        off_tasks = [
+            process_off_target(paths, fits_stokes_slice, nu_slice, t_slice, noff)
+            for noff in range(nof_off_targets)
+        ]
+        precomputed_off_whitened = list(compute(*off_tasks))
+
+    # PARALLELISE TARGET VARIANCES
+    LOGGER.info("Computing all target variances in parallel...")
+    target_tasks = []
+    for target in range(nof_targets):
+        fetched = fetch_fits_and_weights_dask(
+            paths, fits_stokes_slice, nu_slice, t_slice, off_target=False, index=target
+        )
+        target_tasks.append(compute_target_variance_delayed(fetched, precomputed_off_whitened))
+    
+    target_results = compute(*target_tasks)
+
+    # --- 4. SEQUENTIAL SMOOTHING LOOP ---
+    for target in range(nof_targets):
+        
+        target_data, target_header, target_weights, target_weights2, var_a, target_data_a_whitened, var_e = target_results[target]
 
         t_ticks = fetch_t_ticks_mjd(target_header)[t_slice]
         nu_ticks = fetch_axis_ticks(target_header, axis=2)[nu_slice]
@@ -297,11 +336,12 @@ def inspect_dynspec(
         mask_bool = mask.astype(bool)
         mask_nan = np.where(mask_bool, 1, np.nan)
 
-        LOGGER.info(f"""
-            Processing target {target + 1}/{nof_targets}...:\n
-            Project Name: {target_header["NAME"]}\n
-            Source Type: {target_header["SRC-TYPE"]}\n
-            Obs ID: {target_header["OBSID"]}""")
+        LOGGER.info(
+            f"Processing target {target + 1}/{nof_targets} | "
+            f"Project: {target_header.get('NAME', 'Unknown')} | "
+            f"Type: {target_header.get('SRC-TYPE', 'Unknown')} | "
+            f"ObsID: {target_header.get('OBSID', 'Unknown')}"
+        )
         dec_deg = np.round(np.rad2deg(target_header["DEC_RAD"]), 2)
         ra_deg = np.round(np.rad2deg(target_header["RA_RAD"]), 2)
         name_str = f"{target_header['NAME']} {target_header['SRC-TYPE']}"
@@ -378,45 +418,28 @@ def inspect_dynspec(
             LOGGER.info(f"Wrote mask plot to {mask_plot_name}")
 
         """
-        ################### ANALYTICAL DENOISING ##############################
+        ################### APPLY PRE-COMPUTED DENOISING ##############################
         """
-        var_a = get_analytical_variance(target_weights, target_weights2)
-        target_data_a_whitened = target_data / np.sqrt(
-            np.where(var_a == 0, 1, var_a)
-        )  # Jy
-        LOGGER.info("Completed analytical denoising")
+        LOGGER.info("Applied analytical denoising")
         if debug:
             var_a_plot_name = os.path.join(
                 output,
                 f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_var_a.png",
             )
-            var_a_nan = var_a * mask_nan
             var_a_title = f"Analytical variance for {name_str}\nat {coord_str}"
+            var_a_nan = var_a * mask_nan
             vminmax = (0, std_scale * np.nanstd(var_a_nan))
             plot_dynspec(
-                var_a_nan,
-                var_a_plot_name,
-                t_ticks,
-                nu_ticks,
-                vminmax,
-                dpi=dpi,
-                cmap=cmap,
-                title=var_a_title,
-                figsize=figsize,
+                var_a_nan, var_a_plot_name, t_ticks, nu_ticks, vminmax,
+                dpi=dpi, cmap=cmap, title=var_a_title, figsize=figsize,
             )
             LOGGER.info(f"Wrote analytical variance plot to {var_a_plot_name}")
 
-        """
-        ################### EXCESS DENOISING #############################
-        """
         if nof_off_targets != 0:
-            var_e = get_excess_variance(
-                target_data_a_whitened, paths, fits_stokes_slice, nu_slice, t_slice
-            )
             var = var_a * var_e
             wgt = (1 / np.where(var == 0, 1, var)) * mask
             target_data_var_normalised = target_data * wgt  # SNR
-            LOGGER.info("Completed excess denoising.")
+            LOGGER.info("Applied excess denoising.")
         else:
             target_data_var_normalised = target_data_a_whitened.copy()
             wgt = (1 / np.where(var_a == 0, 1, var_a)) * mask
@@ -1729,47 +1752,6 @@ def process_off_target(paths, stokes_slice, nu_slice, t_slice, noff):
     whitened_data = off_data / np.sqrt(np.where(off_var_a == 0, 1, off_var_a))
     return whitened_data
 
-
-def get_excess_variance(
-    target_data_a_whitened: np.ndarray,
-    paths: dict,
-    stokes_slice: np.ndarray,
-    nu_slice: slice,
-    t_slice: slice,
-) -> np.ndarray:
-    nof_off_targets = len(paths["off_target"]["data"])
-    init_shape = (nof_off_targets + 1,) + target_data_a_whitened.shape
-    onoff_a_whitened = np.zeros(init_shape)
-
-    # Prepare delayed tasks for Dask
-    tasks = [
-        process_off_target(paths, stokes_slice, nu_slice, t_slice, noff)
-        for noff in range(nof_off_targets)
-    ]
-
-    # Compute the tasks in parallel
-    results = compute(*tasks)
-
-    # Collect results
-    for noff, whitened_data in enumerate(results):
-        onoff_a_whitened[noff, :, :, :] = whitened_data
-
-    # Add the target data
-    onoff_a_whitened[-1, :, :, :] = target_data_a_whitened
-
-    nstack, _, _, _ = onoff_a_whitened.shape
-
-    # Convert to Dask array for parallel computation of MAD
-    onoff_a_whitened_dask = da.from_array(
-        onoff_a_whitened, chunks=(nstack, "auto", "auto", "auto")
-    )
-    onoff_a_whitened_mad = da.median(
-        da.abs(onoff_a_whitened_dask - da.median(onoff_a_whitened_dask, axis=0)), axis=0
-    ).compute()
-    # Normalize the MAD to be equivalent to scipy.stats.median_abs_deviation with scale='normal'
-    onoff_a_sigma = onoff_a_whitened_mad / 0.6745
-    var_e = np.power(onoff_a_sigma, 2)
-    return var_e
 
 
 def get_analytical_variance(weights: np.ndarray, weights2: np.ndarray) -> np.ndarray:
