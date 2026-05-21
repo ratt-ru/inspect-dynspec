@@ -1,9 +1,26 @@
 import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import cholesky
+import sys
+import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 from typing import Optional, Tuple
+
+#Clean console callbacks for JAX loops
+def _print_cg_progress(k, g, d, c, p):
+    g_val = np.mean(g)
+    d_val = np.mean(d)
+    c_val = np.max(c)
+    k_val = np.max(k)
+    
+    # \r goes to start of line, \033[K clears the rest of the line
+    sys.stdout.write(f"\r\033[KCG Progress: Iter {int(k_val)} | Mean Resid^2={g_val:.2e} | Mean delta_2={d_val:.2e} | Max Patience={int(c_val)}/{int(p)}")
+    sys.stdout.flush()
+
+def _print_cg_done(k, g, c):
+    sys.stdout.write(f"\r\033[KCG Finished: Iter {int(np.max(k))} | Final Mean Resid^2={np.mean(g):.2e} | Stagnated? {bool(np.max(c))}\n")
+    sys.stdout.flush()
 
 
 # Taken from Quartical and written by Landman Bester
@@ -90,10 +107,8 @@ def custom_cg(
         new_count = jnp.where(delta_2 < tol**2, count + 1, 0)
         
         def do_print():
-            jax.debug.print(
-                "Iter {k}: Resid^2={g}, delta_2={d}, Patience={c}/{p}", 
-                k=k, g=gamma_new, d=delta_2, c=new_count, p=patience
-            )
+            jax.debug.callback(_print_cg_progress, k, gamma_new, delta_2, new_count, patience)
+        
         jax.lax.cond(k % print_rate == 0, do_print, lambda: None)
         
         return (x_new, r_new, p_new, gamma_new, k + 1, delta_2, new_count)
@@ -105,10 +120,7 @@ def custom_cg(
     # We consider it converged if the patience counter was the reason we stopped
     converged = count_final >= patience
     
-    jax.debug.print(
-        "CG Finished: Iter {k}, Final Resid^2 {g}, Stagnated? {c}", 
-        k=k_final, g=gamma_final, c=converged
-    )
+    jax.debug.callback(_print_cg_done, k_final, gamma_final, converged)
 
     return x_final
 
