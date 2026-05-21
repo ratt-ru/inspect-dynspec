@@ -311,14 +311,14 @@ def inspect_dynspec(
             t_weight_plot_name = os.path.join(
                 output, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W.png"
             )
-            LOGGER.info(f"Plotting target weights to {t_weight_plot_name}")
+            target_weights_nan = target_weights * mask_nan
             t_weight_title = f"Target weights (W) for {name_str}\nat {coord_str}"
             vminmax = (
-                np.min(target_weights[target_weights != 0]),
-                np.max(target_weights),
+                np.nanmin(target_weights_nan),
+                np.nanmax(target_weights_nan),
             )
             plot_dynspec(
-                target_weights,
+                target_weights_nan,
                 t_weight_plot_name,
                 t_ticks,
                 nu_ticks,
@@ -332,13 +332,14 @@ def inspect_dynspec(
             t2weight_plot_name = os.path.join(
                 output, f"{name_str.replace(' ', '_')}_{ra_deg}_{dec_deg}_W2.png"
             )
+            target_weights2_nan = target_weights2 * mask_nan
             t2weight_title = f"Target weights (W2) for {name_str}\nat {coord_str}"
             vminmax = (
-                np.min(target_weights2[target_weights2 != 0]),
-                np.max(target_weights2),
+                np.nanmin(target_weights2_nan),
+                np.nanmax(target_weights2_nan),
             )
             plot_dynspec(
-                target_weights2,
+                target_weights2_nan,
                 t2weight_plot_name,
                 t_ticks,
                 nu_ticks,
@@ -389,10 +390,11 @@ def inspect_dynspec(
                 output,
                 f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_var_a.png",
             )
+            var_a_nan = var_a * mask_nan
             var_a_title = f"Analytical variance for {name_str}\nat {coord_str}"
-            vminmax = (0, std_scale * np.std(var_a))
+            vminmax = (0, std_scale * np.nanstd(var_a_nan))
             plot_dynspec(
-                var_a,
+                var_a_nan,
                 var_a_plot_name,
                 t_ticks,
                 nu_ticks,
@@ -431,9 +433,9 @@ def inspect_dynspec(
                 )
                 denoise_title = f"{name_str} {stx_str} at {coord_str} \n Left: Raw, Centre: analytically denoised, Right: excess denoised"
                 plot_denoising_progression(
-                    target_data[stx_idx, :, :],
-                    target_data_a_whitened[stx_idx, :, :],
-                    target_data_var_normalised[stx_idx, :, :],
+                    target_data[stx_idx, :, :] * mask_nan,
+                    target_data_a_whitened[stx_idx, :, :] * mask_nan,
+                    target_data_var_normalised[stx_idx, :, :] * mask_nan,
                     t_ticks,
                     nu_ticks,
                     denoise_prog_name,
@@ -455,10 +457,10 @@ def inspect_dynspec(
                 var_e_title = (
                     f"excess variance for {name_str}\n{stx_str} at {coord_str}"
                 )
-                var_e = var_e * np.where(mask == 0, np.nan, 1)
-                vminmax = (0, std_scale * np.std(var_e[stx_idx, :, :]))
+                var_e_nan = var_e * mask_nan
+                vminmax = (0, std_scale * np.nanstd(var_e_nan[stx_idx, :, :]))
                 plot_dynspec(
-                    var_e[stx_idx, :, :],
+                    var_e_nan[stx_idx, :, :],
                     var_e_plot_name,
                     t_ticks,
                     nu_ticks,
@@ -771,9 +773,7 @@ def inspect_dynspec(
                     n_threads,
                 )
                 cwgt_nonzero = np.where(cwgt == 0, 1, cwgt)
-                sdata = conv_target_data_var_normalised / cwgt_nonzero
-
-                smoothed_target_data_var_normalised = sdata
+                sdata = (conv_target_data_var_normalised / cwgt_nonzero) * mask_nan
 
                 for stx_idx, stx in enumerate(stokes_slice):
                     stx_str = STOKES_NAMES[stx]
@@ -819,11 +819,8 @@ def inspect_dynspec(
                         "To calculate rm synthesis, Stokes Q and U must be specified, skipping..."
                     )
                 else:
-                    smoothed_target_data_var_denoised_nan = (
-                        smoothed_target_data_var_normalised * mask_nan
-                    )
                     rm_synth_cdata, phi_range = calc_rm_synthesis(
-                        smoothed_target_data_var_denoised_nan,
+                        sdata,
                         target_header,
                         mask,
                         stokes_slice,
