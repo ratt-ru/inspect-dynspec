@@ -250,16 +250,30 @@ def inspect_dynspec(
         temp_header = hdul[0].header
     
     naxis3 = temp_header.get('NAXIS3', 1)
-    ctype3 = temp_header.get('CTYPE3', '')
     fits_stokes_map = {}
-    
-    if '=' in ctype3:
-        parts = ctype3.split(',')
+
+    # New files store the compact mapping explicitly, e.g. ``1=V``.
+    stokes_mapping = temp_header.get('STOKES', '')
+    if stokes_mapping:
+        parts = str(stokes_mapping).split(',')
         for p in parts:
             if '=' in p:
-                idx_str, stokes_char = p.split('=')
+                idx_str, stokes_char = p.split('=', 1)
                 fits_stokes_map[stokes_char.strip()] = int(idx_str.strip()) - 1
-    else:
+
+    # Some intermediate DynSpecMS versions put the mapping in CTYPE3's
+    # comment field. Keep reading those files before using the legacy default.
+    if not fits_stokes_map:
+        ctype3_comment = (
+            temp_header.comments['CTYPE3'] if 'CTYPE3' in temp_header else ''
+        )
+        if '=' in ctype3_comment:
+            for p in ctype3_comment.split(','):
+                if '=' in p:
+                    idx_str, stokes_char = p.split('=', 1)
+                    fits_stokes_map[stokes_char.strip()] = int(idx_str.strip()) - 1
+
+    if not fits_stokes_map:
         default_order = ['I', 'Q', 'U', 'V']
         for i in range(min(naxis3, len(default_order))):
             fits_stokes_map[default_order[i]] = i
