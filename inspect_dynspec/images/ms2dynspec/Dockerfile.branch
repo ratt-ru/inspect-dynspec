@@ -42,7 +42,7 @@ RUN python -m pip install --no-cache-dir "meqtrees-cattery"
 # Install DynSpecMS from the specified GitHub repository
 RUN python -m pip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_nojax"
 
-# set XDG cache (normally ~/.cache)
+# set XDG cache (normally at ~/.cache)
 ENV XDG_CACHE_HOME /var/cache
 ENV XDG_CONFIG_HOME /var/config
 RUN mkdir -p /var/cache/astropy /var/config/astropy
