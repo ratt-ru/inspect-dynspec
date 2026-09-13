@@ -1365,8 +1365,11 @@ def plot_smoothed_data(
             twin_y_axis.xaxis.set_ticks([])
             twin_y_axis.xaxis.set_ticklabels([])
 
-            ellipse_center_x = len(t_ticks) - 125
-            ellipse_center_y = nu_ticks[-1] - 55
+            x_margin = (len(t_ticks) - 1) * 0.02
+            y_margin = (nu_ticks[-1] - nu_ticks[0]) * 0.04
+
+            ellipse_center_x = (len(t_ticks) - 1) - x_margin
+            ellipse_center_y = nu_ticks[-1] - y_margin
             ellipse_width_time = t_delta / total_time_range_seconds * len(t_ticks)
 
             # Create the ellipse
