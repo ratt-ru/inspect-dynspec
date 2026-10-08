@@ -77,6 +77,32 @@ cabs:
         dtype: List[int]
         policies:
           repeat: '[]'
+      calc_sec_spec:
+        dtype: bool
+        info: "Calculate the secondary spectrum (2D power spectrum over delay and Doppler frequency) of the unsmoothed, whitened data for each requested Stokes parameter."
+        default: false
+      sec_spec_smooth:
+        dtype: int
+        info: "Boxcar width in pixels applied to the power (reduces speckle). 1 = off"
+        default: 3
+      sec_spec_pad:
+        dtype: int
+        info: "Padding factor for the secondary spectrum. Default is 2."
+        default: 2
+      sec_spec_fd_max:
+        dtype: Optional[float]
+        info: "Maximum Doppler frequency |f_D| shown in the secondary spectrum plot, in mHz. Default: the whole axis (or the auto zoom)."
+      sec_spec_tau_max:
+        dtype: Optional[float]
+        info: "Maximum delay shown in the secondary spectrum plot, in microseconds. Default: the whole axis (or the auto zoom)."
+      sec-spec-zoom:
+        dtype: str
+        info: "Region of the secondary spectrum to plot: 'none' (default) shows the whole plane, 'auto' frames the region of significant power around the origin (scintles and any arc). sec_spec_fd_max / sec_spec_tau_max, when given, override that axis."
+        default: "none"
+      sec-spec-zoom-margin:
+        dtype: float
+        info: "With sec-spec-zoom auto, show this many times the extent of the significant region (1 = just that region). Default 2."
+        default: 2.0
       zero-sub-value-tolerance:
         dtype: float
         info: "Circular and linear polarization fractions require division by I. To avoid divide by zero issues, values within 0 ± tolerance are substituted for this tolerance value."

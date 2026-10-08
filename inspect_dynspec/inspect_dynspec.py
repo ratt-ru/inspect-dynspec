@@ -14,6 +14,7 @@ import dask.array as da
 from dask import delayed, compute
 from ducc0.fft import r2c, c2r
 import numpy as np
+from scipy import ndimage
 import jax.numpy as jnp
 import click
 import os
@@ -195,6 +196,13 @@ def inspect_dynspec(
     gpr_patience: int,
     gpr_maxiter: int,
     gpr_samples: int,
+    calc_sec_spec: bool = False,
+    sec_spec_smooth: int = 3,
+    sec_spec_pad: int = 2,
+    sec_spec_fd_max: Optional[float] = None,
+    sec_spec_tau_max: Optional[float] = None,
+    sec_spec_zoom: str = "none",
+    sec_spec_zoom_margin: float = 2.0,
 ) -> None:
     run_args = locals().copy() # grab args before they're modified
     script_name = text2art("Inspect Dynspec")
@@ -307,6 +315,7 @@ def inspect_dynspec(
 
     stokes_slice = np.array(internal_stokes_slice, dtype=int)
     fits_stokes_slice = np.array(fits_stokes_slice, dtype=int)
+    base_stokes_slice = stokes_slice.copy()
 
     nu_slice = slice(nu_bounds[0], None if nu_bounds[1] == -1 else nu_bounds[1] + 1)
     t_slice = slice(t_bounds[0], None if t_bounds[1] == -1 else t_bounds[1] + 1)
@@ -341,7 +350,9 @@ def inspect_dynspec(
 
     # --- 4. SEQUENTIAL SMOOTHING LOOP ---
     for target in range(nof_targets):
-        
+        # derived products (C, L, P) extend stokes_slice below, so start each target afresh
+        stokes_slice = base_stokes_slice.copy()
+
         target_data, target_header, target_weights, target_weights2, var_a, target_data_a_whitened, var_e = target_results[target]
 
         t_ticks = fetch_t_ticks_mjd(target_header)[t_slice]
@@ -457,6 +468,8 @@ def inspect_dynspec(
         else:
             target_data_var_normalised = target_data_a_whitened.copy()
             wgt = (1 / np.where(var_a == 0, 1, var_a)) * mask
+            # var_a is per (freq, time); repeat it per stokes so wgt is (n_pol, n_freq, n_time) in both branches
+            wgt = np.repeat(wgt[np.newaxis, :, :], target_data.shape[0], axis=0)
 
         """
         ################### PLOT DENOISING PROGRESSION #####################################
@@ -511,6 +524,50 @@ def inspect_dynspec(
                 LOGGER.info(
                     f"Wrote excess variance plot for {stx_str} to {var_e_plot_name}"
                 )
+
+        """
+        ################### OPTIONALLY CALCULATE SECONDARY SPECTRUM ##########################
+        """
+        if calc_sec_spec:
+            delta_time = abs(target_header["CDELT1"])  # s
+            delta_freq = abs(target_header["CDELT2"])  # MHz
+            for stx_idx, stx in enumerate(base_stokes_slice):
+                stx_str = STOKES_NAMES[stx]
+                # whiten: data / sigma, so noise has unit variance everywhere (wgt = mask / var)
+                w = wgt[stx_idx] if wgt.ndim == 3 else wgt
+                whitened = target_data[stx_idx] * np.sqrt(w)
+                LOGGER.info(
+                    f"Secondary spectrum {stx_str}: robust std of whitened data = "
+                    f"{robust_std(whitened[mask.astype(bool)]):.3g} (expect ~1)"
+                )
+
+                sspec, tau, fd = calc_secondary_spectrum(
+                    whitened, mask, delta_freq, delta_time,
+                    smooth=sec_spec_smooth, pad=sec_spec_pad,
+                )
+                sspec_title = (
+                    ""
+                    if plot_for_paper
+                    else f"Secondary spectrum, {stx_str}\nfor {name_str} at {coord_str}"
+                )
+                sspec_plot_name = os.path.join(
+                    output,
+                    f"{name_str.replace(' ', '_')}_{round(target_header['RA_RAD'],ndigits=2)}_{round(target_header['DEC_RAD'],ndigits=2)}_stokes_{stx_str.replace(' ', '_')}_secondary_spectrum.png",
+                )
+                zoom_fd, zoom_tau = sec_spec_plot_limits(
+                    sspec, tau, fd, zoom=sec_spec_zoom, fd_max=sec_spec_fd_max, tau_max=sec_spec_tau_max,
+                    pad=sec_spec_pad, margin=sec_spec_zoom_margin,
+                )
+                LOGGER.info(
+                    f"Secondary spectrum {stx_str}: plotting |f_D| <= {zoom_fd if zoom_fd is not None else np.abs(fd).max():.3g} mHz, "
+                    f"tau <= {zoom_tau if zoom_tau is not None else tau.max():.3g} us"
+                )
+                plot_secondary_spectrum(
+                    sspec, tau, fd, sspec_plot_name,
+                    dpi=dpi, cmap=cmap, title=sspec_title, figsize=figsize,
+                    fd_max=zoom_fd, tau_max=zoom_tau,
+                )
+                LOGGER.info(f"Wrote secondary spectrum for {stx_str} to {sspec_plot_name}")
 
         """
         ################### OPTIONALLY CALCULATE CIRCULAR POLARISATION FRACTION ########################
@@ -1615,6 +1672,196 @@ def plot_denoising_progression(
     if return_plot:
         return ax
     plt.close()
+
+
+def _boxcar_smooth(arr: np.ndarray, n: int) -> np.ndarray:
+    """Separable n x n boxcar smoothing (no-op for n <= 1)."""
+    if n <= 1:
+        return arr
+    k = np.ones(n) / n
+    arr = np.apply_along_axis(np.convolve, 0, arr, k, mode="same")
+    return np.apply_along_axis(np.convolve, 1, arr, k, mode="same")
+
+
+def calc_secondary_spectrum(
+    whitened: np.ndarray,
+    mask: np.ndarray,
+    delta_freq: float,
+    delta_time: float,
+    smooth: int = 3,
+    remove_stripes: bool = True,
+    pad: int = 2,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Simple secondary spectrum |FFT2(dynspec)|^2 of a whitened dynamic spectrum.
+    Flagged pixels are set to zero (equivalent to mean-filling after mean subtraction).
+    Args:
+        whitened: 2D array (n_freq, n_time), data / sigma so the noise has unit variance.
+        mask: 2D array, 1 = good, 0 = flagged.
+        delta_freq: Channel width (MHz) -> delay axis in microseconds.
+        delta_time: Sample time (s) -> Doppler axis in mHz.
+        smooth: Boxcar width in pixels applied to the power (reduces speckle). 1 = off.
+        remove_stripes: Subtract per-channel and per-time means of the good data.
+        pad: Zero-padding factor per axis. Only interpolates the spectrum (finer sampling);
+            >= 2 means the implied autocorrelation has no circular wrap-around.
+    Returns:
+        sspec: 2D power (n_tau, n_fd), normalised so pure white noise has a floor of ~1.
+        tau: 1D delays (us), tau >= 0 only (the spectrum is point-symmetric).
+        fd: 1D Doppler frequencies (mHz), fftshifted.
+    """
+    good = mask.astype(bool)
+    d = np.where(good, whitened, 0.0)
+
+    if remove_stripes:
+        # kill constant-per-channel and constant-per-time structure (piles power on the axes)
+        n_t = np.maximum(good.sum(axis=1, keepdims=True), 1)
+        d = np.where(good, d - d.sum(axis=1, keepdims=True) / n_t, 0.0)
+        n_f = np.maximum(good.sum(axis=0, keepdims=True), 1)
+        d = np.where(good, d - d.sum(axis=0, keepdims=True) / n_f, 0.0)
+    else:
+        d = np.where(good, d - d[good].mean(), 0.0)
+
+    # taper the edges to limit leakage from the bright core
+    n_freq, n_time = d.shape
+    win = np.outer(np.hanning(n_freq), np.hanning(n_time))
+    d *= win
+
+    # real FFT along frequency (axis 0) -> tau >= 0 only; full FFT along time
+    n_freq_p, n_time_p = pad * n_freq, pad * n_time
+    sspec = np.abs(np.fft.rfft2(d, s=(n_time_p, n_freq_p), axes=(1, 0))) ** 2
+    sspec = np.fft.fftshift(sspec, axes=1)
+    sspec = _boxcar_smooth(sspec, smooth)
+    # normalise empirically: most of the plane is noise, so its median sets the floor to ~1.
+    # (doesn't rely on the whitening giving exactly unit variance)
+    floor = np.median(sspec)
+    sspec /= floor if floor > 0 else 1.0
+
+    tau = np.fft.rfftfreq(n_freq_p, d=abs(delta_freq))  # 1/MHz = us
+    fd = np.fft.fftshift(np.fft.fftfreq(n_time_p, d=abs(delta_time))) * 1e3  # mHz
+    return sspec, tau, fd
+
+
+def plot_secondary_spectrum(
+    sspec: np.ndarray,
+    tau: np.ndarray,
+    fd: np.ndarray,
+    output: str,
+    dpi: int = 300,
+    cmap: str = "viridis",
+    title: str = "",
+    figsize: tuple = (12, 6),
+    fd_max: Optional[float] = None,
+    tau_max: Optional[float] = None,
+    return_plot: bool = False,
+) -> Optional[Axes]:
+    """
+    Plot log10 of the secondary spectrum (noise floor = 0).
+    fd_max (mHz) / tau_max (us) optionally zoom in on the inner region.
+    """
+    if fd_max is not None:
+        keep = np.abs(fd) <= fd_max
+        sspec, fd = sspec[:, keep], fd[keep]
+    if tau_max is not None:
+        keep = tau <= tau_max
+        sspec, tau = sspec[keep, :], tau[keep]
+    log_s = np.log10(np.maximum(sspec, 1e-12))
+    vmin = -0.5  # a little below the floor so the noise texture is visible
+    vmax = max(np.nanpercentile(log_s, 99.9), 1.0)
+
+    _, ax = plt.subplots(1, 1, figsize=figsize)
+    im = ax.imshow(
+        log_s,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        aspect="auto",
+        origin="lower",
+        interpolation="nearest",
+        extent=[fd[0], fd[-1], tau[0], tau[-1]],
+    )
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"$\log_{10}$ power (noise floor = 0)")
+    ax.set_xlabel(r"$f_D$ (mHz)")
+    ax.set_ylabel(r"$\tau$ ($\mu$s)")
+    ax.set_title(title)
+    plt.savefig(output, dpi=dpi, bbox_inches="tight")
+    if return_plot:
+        return ax
+    plt.close()
+    return None
+
+
+def sec_spec_plot_limits(
+    sspec: np.ndarray,
+    tau: np.ndarray,
+    fd: np.ndarray,
+    zoom: str = "none",
+    fd_max: Optional[float] = None,
+    tau_max: Optional[float] = None,
+    pad: int = 2,
+    margin: float = 2.0,
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Plot limits for a secondary spectrum. By default the whole plane; zoom="auto" frames the significant
+    power (sec_spec_auto_zoom); an explicit fd_max (mHz) or tau_max (us) always sets that axis.
+    Returns:
+        (fd_lim, tau_lim): None means the full extent of that axis.
+    """
+    if zoom not in ("none", "auto"):
+        LOGGER.warning(f"Unknown sec-spec-zoom '{zoom}', showing the whole plane (use 'none' or 'auto')")
+        zoom = "none"
+    fd_lim, tau_lim = sec_spec_auto_zoom(sspec, tau, fd, pad=pad, margin=margin) if zoom == "auto" else (None, None)
+    if fd_max is not None:
+        fd_lim = fd_max
+    if tau_max is not None:
+        tau_lim = tau_max
+    return fd_lim, tau_lim
+
+
+def sec_spec_auto_zoom(
+    sspec: np.ndarray,
+    tau: np.ndarray,
+    fd: np.ndarray,
+    pad: int = 2,
+    nsigma: float = 3.0,
+    smooth: int = 5,
+    margin: float = 2.0,
+    min_res: float = 10.0,
+) -> Tuple[float, float]:
+    """
+    Zoom for a secondary spectrum plot: the extent of the region of significant power connected to
+    the origin (scintles and any arc), so that the interesting part fills the plot.
+    The log power is smoothed (smooth x smooth bins), compared with the median and robust scatter of
+    the outer half of the plane (assumed to be noise), thresholded at nsigma, and the connected regions
+    touching the inner 5% of the plane are kept.
+    Args:
+        sspec: 2D power (n_tau, n_fd), noise floor ~1 (from calc_secondary_spectrum).
+        tau: 1D delays (us).
+        fd: 1D Doppler frequencies (mHz).
+        pad: Padding factor the spectrum was made with (sets the minimum extent).
+        nsigma: Threshold above the noise, in robust standard deviations of the smoothed log power.
+        smooth: Boxcar width (bins) applied to the log power before thresholding.
+        margin: Factor applied to the extent found, so the plot also shows its surroundings
+            (1 = just the significant region).
+        min_res: Minimum extent, in native resolution elements (pad bins).
+    Returns:
+        (fd_max, tau_max): half width in f_D (mHz) and maximum delay (us) to plot.
+    """
+    logp = _boxcar_smooth(np.log10(np.maximum(sspec, 1e-12)), smooth)
+    outer = (np.abs(fd)[None, :] > 0.5 * np.abs(fd).max()) | (tau[:, None] > 0.5 * tau.max())
+    ref = logp[outer]
+    med = np.median(ref)
+    sd = 1.4826 * np.median(np.abs(ref - med))
+    labels, _ = ndimage.label(logp > med + nsigma * sd)
+    inner = (np.abs(fd)[None, :] <= 0.05 * np.abs(fd).max()) & (tau[:, None] <= 0.05 * tau.max())
+    keep = np.setdiff1d(np.unique(labels[inner & (labels > 0)]), [0])
+    fd_ext = min_res * pad * abs(fd[1] - fd[0])
+    tau_ext = min_res * pad * (tau[1] - tau[0])
+    if keep.size:
+        rows, cols = np.nonzero(np.isin(labels, keep))
+        fd_ext = max(fd_ext, margin * np.abs(fd[cols]).max())
+        tau_ext = max(tau_ext, margin * tau[rows].max())
+    return float(min(fd_ext, np.abs(fd).max())), float(min(tau_ext, tau.max()))
 
 
 def make_kernel(x, l):
