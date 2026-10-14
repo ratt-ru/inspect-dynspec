@@ -1,6 +1,6 @@
 # inspect-dynspec
 A Radio Astronomy Software post-processing tool for [RIMS](https://github.com/saopicc/RIMS) _Dynamic Spectra_ output. The tool will produce a noise estimate and smooth the target dynamic spectra according to the provided RIMS output and specified parameters.
-In essence, it serves as a companion tool to RIMS, where it will improve and neatly plot (`png`) the dynamic spectra (`fits`) from RIMS.
+In essence, it serves as a companion tool to RIMS, where it will improve and neatly plot (`png`) the dynamic spectra (`fits` or `zarr`) from RIMS.
 
 ### Installation
 
@@ -24,6 +24,7 @@ Notes:
 - You may specify which Stokes dynamic spectra you want processed and plotted.
 - The specified output directory will be created if it is not.
 - The input path need not point exactly to the output of RIMS folder, as the tool will traverse down until it finds a RIMS-like output directory (to make sure it gets the right one though, you should probably be exact).
+- RIMS output can be FITS (`TARGET/`, `TARGET_W/`, `OFF/`, `OFF_W/`) or a single `RIMS-Spec.zarr` (`rims run --OutputZarr 1`). The type is detected from the `OutputZarr` argument in `run_metadata.json`, otherwise from what is on disk. If several RIMS outputs are found under the input path, zarr ones are preferred, then the shallowest. Use `--input-format fits` or `--input-format zarr` to choose explicitly. The same plots are produced for either type.
 
 ### Output:
 Depending on your parameters, the output folder will contain an assortment of `png` plots.
