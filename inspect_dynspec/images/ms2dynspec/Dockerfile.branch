@@ -40,7 +40,7 @@ RUN git clone https://github.com/saopicc/DDFacet.git && \
 RUN python -m pip install --no-cache-dir "meqtrees-cattery"
 
 # Install DynSpecMS from the specified GitHub repository
-RUN python -m pip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_nojax"
+RUN python -m pip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_jax"
 
 # set XDG cache (normally at ~/.cache)
 ENV XDG_CACHE_HOME /var/cache
