@@ -1,5 +1,7 @@
 *.pyc
 *.egg-info
 stimela.stats*
-stimela.config.deps
-log-stimela.txt
+stimela.*.deps
+log-*.txt
+last_dynspec.obj
+__pycache__/

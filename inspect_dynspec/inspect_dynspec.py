@@ -106,24 +106,114 @@ def calculate_circular_kernel(
     return float(nu_delta), float(t_delta)
 
 
-# Function to find a valid input directory containing TARGET and TARGET_W subdirectories
-def find_valid_root(input: str) -> str:
-    required_dirs = {"TARGET", "TARGET_W"}
+ZARR_NAME = "RIMS-Spec.zarr"
+FITS_REQUIRED_DIRS = {"TARGET", "TARGET_W"}
+
+
+def is_zarr_store(path: str) -> bool:
+    return os.path.isfile(os.path.join(path, "zarr.json"))
+
+
+def read_rims_output_flag(dirpath: str) -> Optional[str]:
+    """
+    Returns the output type RIMS was run with ("zarr" or "fits") according to the
+    --OutputZarr argument stored in run_metadata.json, or None if it is not recorded.
+    """
+    meta_file = os.path.join(dirpath, "run_metadata.json")
+    if not os.path.isfile(meta_file):
+        return None
+    try:
+        with open(meta_file) as f:
+            output_zarr = json.load(f).get("arguments", {}).get("OutputZarr")
+    except (OSError, ValueError, AttributeError) as e:
+        LOGGER.warning(f"Could not read {meta_file}: {e}")
+        return None
+    if output_zarr is None:
+        return None
+    return "zarr" if int(output_zarr) else "fits"
+
+
+def resolve_dir_format(dirpath: str, formats: set) -> str:
+    """
+    Choose the format of a single RIMS output directory holding the given formats on disk.
+    run_metadata.json decides if it records --OutputZarr, otherwise zarr is preferred.
+    """
+    flag = read_rims_output_flag(dirpath)
+    if flag is not None:
+        if flag in formats:
+            return flag
+        LOGGER.warning(
+            f"run_metadata.json in {dirpath} says RIMS wrote {flag} output, "
+            f"but only {', '.join(sorted(formats))} was found there"
+        )
+    if len(formats) > 1:
+        LOGGER.warning(f"{dirpath} contains both FITS and zarr RIMS output, using zarr")
+    return "zarr" if "zarr" in formats else "fits"
+
+
+def detect_rims_output(input: str, input_format: str = "auto") -> Tuple[str, str]:
+    """
+    Find the RIMS output directory under input and the format it was written in.
+    A directory is a RIMS output if it holds RIMS-Spec.zarr (zarr) or TARGET and
+    TARGET_W subdirectories (fits). If several are found, zarr outputs are preferred,
+    then the shallowest directory.
+    Args:
+        input: Path to search, or the RIMS-Spec.zarr store itself.
+        input_format: "auto", "fits" or "zarr".
+    Returns:
+        Tuple of the RIMS output directory and its format ("fits" or "zarr").
+    """
+    input_format = (input_format or "auto").lower()
+    if input_format not in ("auto", "fits", "zarr"):
+        raise ValueError(f"input-format must be auto, fits or zarr, not {input_format}")
+
+    input = os.path.abspath(input)
+    if is_zarr_store(input):
+        if input_format == "fits":
+            raise ValueError(f"{input} is a zarr store but input-format is fits")
+        if os.path.basename(input) != ZARR_NAME:
+            raise ValueError(f"Expected the zarr store to be named {ZARR_NAME}: {input}")
+        return os.path.dirname(input), "zarr"
+
+    candidates = {}
     for dirpath, dirnames, _ in os.walk(input):
-        if required_dirs.issubset(set(dirnames)):
-            return dirpath
-    raise FileNotFoundError(
-        f"No directory containing {required_dirs} found under {input}"
-    )
+        formats = set()
+        if ZARR_NAME in dirnames and is_zarr_store(os.path.join(dirpath, ZARR_NAME)):
+            formats.add("zarr")
+        if FITS_REQUIRED_DIRS.issubset(set(dirnames)):
+            formats.add("fits")
+        if input_format != "auto":
+            formats &= {input_format}
+        if formats:
+            candidates[dirpath] = resolve_dir_format(dirpath, formats)
+        # no need to look inside zarr stores
+        dirnames[:] = [d for d in dirnames if not d.endswith(".zarr")]
+
+    if not candidates:
+        wanted = {"auto": f"{ZARR_NAME} or {FITS_REQUIRED_DIRS}", "zarr": ZARR_NAME,
+                  "fits": str(FITS_REQUIRED_DIRS)}[input_format]
+        raise FileNotFoundError(f"No directory containing {wanted} found under {input}")
+
+    def preference(item):
+        dirpath, fmt = item
+        return (fmt != "zarr", dirpath.count(os.sep), dirpath)
+
+    ranked = sorted(candidates.items(), key=preference)
+    if len(ranked) > 1:
+        LOGGER.warning(
+            f"Found {len(ranked)} RIMS outputs under {input}: "
+            + ", ".join(f"{d} ({f})" for d, f in ranked)
+            + f". Using {ranked[0][0]} ({ranked[0][1]})"
+        )
+    return ranked[0]
 
 
 @delayed
 def compute_target_variance_delayed(fetched_data, precomputed_off_whitened):
     """Computes var_a and var_e for a single target in a delayed Dask thread."""
-    target_data, target_header, target_weights, target_weights2 = fetched_data
+    target_data, target_header, target_weights, target_weights2, var_a = fetched_data
     
-    #Analytical variance (var_a) - STRICTLY SPECIFIC TO A TARGET
-    var_a = get_analytical_variance(target_weights, target_weights2)
+    #Analytical variance (var_a) - STRICTLY SPECIFIC TO A TARGET, provided by the reader
     target_data_a_whitened = target_data / np.sqrt(np.where(var_a == 0, 1, var_a))
 
     #Excess variance (var_e) - GENERALIZED ACROSS OFF-TARGETS + THIS TARGET
@@ -171,6 +261,7 @@ schemas = OmegaConf.load(os.path.join(os.path.dirname(__file__), "inspect_dynspe
 @clickify_parameters(schemas.cabs.get("inspect_dynspec"))
 def inspect_dynspec(
     root: str,
+    input_format: str,
     output: str,
     kernel: list,
     nu_bounds: tuple,
@@ -208,9 +299,9 @@ def inspect_dynspec(
     else:
         figsize = (12, 6)
 
-    # Ensure the correct root directory is used
-    root = find_valid_root(root)
-    LOGGER.info(f"Found root for DynSpecMS products at {root}")
+    # Ensure the correct root directory is used and find which output type RIMS wrote
+    root, rims_format = detect_rims_output(root, input_format)
+    LOGGER.info(f"Found root for DynSpecMS products at {root} ({rims_format} output)")
 
     if verbose:
         set_console_logging_level(logging.DEBUG)
@@ -230,7 +321,7 @@ def inspect_dynspec(
         "RM Synthesis",
     ]
 
-    paths = get_files_paths(root)
+    paths = get_source_index(root, rims_format)
     nof_targets = len(paths["target"]["data"])
     nof_off_targets = len(paths["off_target"]["data"])
     LOGGER.info(
@@ -246,8 +337,7 @@ def inspect_dynspec(
     LOGGER.info(f"Output directory: {output}")
 
     # DETERMINE SLICES FROM FIRST TARGET ONCE
-    with fits.open(paths["target"]["data"][0]) as hdul:
-        temp_header = hdul[0].header
+    temp_header = read_header(paths, off_target=False, index=0)
     
     naxis3 = temp_header.get('NAXIS3', 1)
     fits_stokes_map = {}
@@ -296,7 +386,7 @@ def inspect_dynspec(
         available_stokes = "".join(fits_stokes_map.keys())
         requested_missing = "".join(missing_stokes)
         LOGGER.error(
-            f"FITS files only have Stokes {available_stokes}, "
+            f"RIMS output only has Stokes {available_stokes}, "
             f"cannot compute requested Stokes {requested_missing}. Exiting."
         )
         return
@@ -332,7 +422,7 @@ def inspect_dynspec(
     LOGGER.info("Computing all target variances in parallel...")
     target_tasks = []
     for target in range(nof_targets):
-        fetched = fetch_fits_and_weights_dask(
+        fetched = fetch_direction_dask(
             paths, fits_stokes_slice, nu_slice, t_slice, off_target=False, index=target
         )
         target_tasks.append(compute_target_variance_delayed(fetched, precomputed_off_whitened))
@@ -340,8 +430,11 @@ def inspect_dynspec(
     target_results = compute(*target_tasks)
 
     # --- 4. SEQUENTIAL SMOOTHING LOOP ---
+    requested_stokes_slice = stokes_slice
     for target in range(nof_targets):
-        
+        # derived products (indices 4-6) are appended per target, so start each target afresh
+        stokes_slice = requested_stokes_slice.copy()
+
         target_data, target_header, target_weights, target_weights2, var_a, target_data_a_whitened, var_e = target_results[target]
 
         t_ticks = fetch_t_ticks_mjd(target_header)[t_slice]
@@ -900,6 +993,8 @@ def inspect_dynspec(
                     LOGGER.info(f"Wrote rm synth smoothed plot to {rmsynth_plot_name}")
     
     # Write the run summary to last_run.json
+    run_args["rims_dir"] = root
+    run_args["input_format_resolved"] = rims_format
     last_run_path = os.path.join(output, "last_run_inspect_params.json")
     try:
         with open(last_run_path, "w") as f:
@@ -909,8 +1004,7 @@ def inspect_dynspec(
         LOGGER.warning(f"Could not write run summary to {last_run_path}: {e}")
 
 
-@delayed
-def fetch_fits_and_weights_dask(
+def fetch_fits_and_weights(
     paths, stokes_slice, nu_slice, t_slice, off_target, index
 ):
     target_str = "off_target" if off_target else "target"
@@ -927,7 +1021,108 @@ def fetch_fits_and_weights_dask(
     with fits.open(paths[target_str]["target_W2"][index]) as hdu_list_weights2:
         target_weights2 = hdu_list_weights2[0].data[0, nu_slice, t_slice]
 
-    return target_data, target_header, target_weights, target_weights2
+    var_a = get_analytical_variance(target_weights, target_weights2)
+
+    return target_data, target_header, target_weights, target_weights2, var_a
+
+
+def fetch_zarr_and_weights(
+    paths, stokes_slice, nu_slice, t_slice, off_target, index
+):
+    import zarr
+
+    target_str = "off_target" if off_target else "target"
+    isrc = paths[target_str]["data"][index]
+
+    group = zarr.open_group(paths["zarr_path"], mode="r")
+    target_data = (
+        group["Targets"].oindex[isrc, stokes_slice, nu_slice, t_slice].astype(np.float64)
+    )
+    target_weights = group["Weights"][isrc, nu_slice, t_slice]
+    # RIMS stores var_a = W2/W**2 (1 where W == 0) directly
+    var_a = group["Var_A"][isrc, nu_slice, t_slice]
+    # W2 is not stored, rebuild it for the debug plots
+    target_weights2 = np.where(target_weights == 0, 0, var_a * np.power(target_weights, 2))
+    target_header = zarr_header(paths["meta"], isrc)
+
+    return target_data, target_header, target_weights, target_weights2, var_a
+
+
+def fetch_direction(paths, stokes_slice, nu_slice, t_slice, off_target, index):
+    """
+    Read one direction from the RIMS output, whichever format it was written in.
+    Returns:
+        Tuple of data (n_pol, n_freq, n_time), FITS header, W, W2 and var_a (n_freq, n_time).
+    """
+    if paths["format"] == "zarr":
+        reader = fetch_zarr_and_weights
+    else:
+        reader = fetch_fits_and_weights
+    return reader(paths, stokes_slice, nu_slice, t_slice, off_target, index)
+
+
+@delayed
+def fetch_direction_dask(paths, stokes_slice, nu_slice, t_slice, off_target, index):
+    return fetch_direction(paths, stokes_slice, nu_slice, t_slice, off_target, index)
+
+
+def read_header(paths, off_target, index) -> fits.header.Header:
+    target_str = "off_target" if off_target else "target"
+    if paths["format"] == "zarr":
+        return zarr_header(paths["meta"], paths[target_str]["data"][index])
+    with fits.open(paths[target_str]["data"][index]) as hdul:
+        return hdul[0].header
+
+
+def zarr_header(meta: dict, isrc: int) -> fits.header.Header:
+    """
+    Builds the FITS header RIMS writes for a direction from the zarr coordinates and
+    attributes, so that all header derived axes match those of the FITS output.
+    Args:
+        meta: Coordinates and attributes of the zarr store (see get_source_index).
+        isrc: Index of the direction along the source dimension.
+    Returns:
+        FITS header.
+    """
+    attrs = meta["attrs"]
+    hdr = fits.Header()
+    hdr.set("NAXIS", 3)
+    hdr.set("NAXIS1", meta["sizes"]["time"])
+    hdr.set("NAXIS2", meta["sizes"]["freq"])
+    hdr.set("NAXIS3", meta["sizes"]["stokes"])
+    hdr.set("CTYPE1", "Time", "Time")
+    hdr.set("CRPIX1", 1.0, "Reference")
+    hdr.set("CRVAL1", 0.0, "Time at the reference pixel (sec since OBS-STAR)")
+    hdr.set("CDELT1", meta["cdelt1"], "Delta time (sec)")
+    hdr.set("CUNIT1", "Time", "unit")
+    hdr.set("CTYPE2", "Frequency", "Frequency")
+    hdr.set("CRPIX2", 1.0, "Reference")
+    hdr.set("CRVAL2", attrs["FRQ-MIN"] * 1e-6, "Frequency at the reference pixel (MHz)")
+    hdr.set("CDELT2", attrs["CHAN-WID"] * 1e-6, "Delta freq (MHz)")
+    hdr.set("CUNIT2", "MHz", "unit")
+    hdr.set("CTYPE3", "STOKES", "Stokes parameter")
+    hdr.set(
+        "STOKES",
+        ", ".join(f"{i + 1}={s}" for i, s in enumerate(meta["stokes"])),
+        "Array index to Stokes mapping",
+    )
+    for key in ["DATE-CRE", "OBSID", "CHAN-WID", "FRQ-MIN", "FRQ-MAX", "OBS-STAR", "OBS-STOP"]:
+        if key in attrs:
+            hdr.set(key, attrs[key])
+    hdr.set("RA_RAD", meta["ra"][isrc], "Pixel right ascension")
+    hdr.set("DEC_RAD", meta["dec"][isrc], "Pixel declination")
+    for key in ["TEL_NAME", "PROJECT", "OBSERVER"]:
+        if key in attrs:
+            hdr.set(key, attrs[key])
+    # the original source name (e.g. Off0027 rather than the OFF_<k> label) as in the FITS output
+    hdr.set("NAME", meta["name"][isrc], "Name of the source in the source list")
+    hdr.set("SRC-TYPE", meta["src_type"][isrc], "Type of the source in the source list")
+    if "ORIGIN" in attrs:
+        hdr.set("ORIGIN", attrs["ORIGIN"])
+    for key in ["facet", "tessel"]:
+        if key in meta:
+            hdr.set(key.upper(), meta[key][isrc])
+    return hdr
 
 
 def check_colormap(colormap_name):
@@ -1757,15 +1952,14 @@ def convolve(
 
 @delayed
 def process_off_target(paths, stokes_slice, nu_slice, t_slice, noff):
-    off_data, _, off_data_w, off_data_w2 = fetch_fits_and_weights_dask(
+    off_data, _, _, _, off_var_a = fetch_direction(
         paths,
         stokes_slice,
         nu_slice,
         t_slice,
         off_target=True,
         index=noff,
-    ).compute()
-    off_var_a = get_analytical_variance(off_data_w, off_data_w2)
+    )
     whitened_data = off_data / np.sqrt(np.where(off_var_a == 0, 1, off_var_a))
     return whitened_data
 
@@ -1774,15 +1968,16 @@ def process_off_target(paths, stokes_slice, nu_slice, t_slice, noff):
 def get_analytical_variance(weights: np.ndarray, weights2: np.ndarray) -> np.ndarray:
     """
     Provided with the weights and weights^2, calculates the analytical variance as:
-    var_a = W2/W**2
+    var_a = W2/W**2, with var_a = 1 wherever W == 0.
     Args:
         weights: 2D array of weights (n_freq, n_time)
         weights2: 2D array of weights^2 (n_freq, n_time)
     Returns:
         3D array of first order normalized data
     """
-    weights = np.where(weights == 0, 1, weights)
-    var_a = weights2 / np.power(weights, 2)
+    zero_w = weights == 0
+    safe_w = np.where(zero_w, 1, weights)
+    var_a = np.where(zero_w, 1, weights2 / np.power(safe_w, 2))
     return var_a
 
 
@@ -1869,3 +2064,55 @@ def get_files_paths(input: str) -> dict:
     }
 
     return paths
+
+
+def get_source_index(root: str, rims_format: str) -> dict:
+    """
+    Args:
+        root: Path to the RIMS output directory.
+        rims_format: "fits" or "zarr".
+    Returns:
+        Dictionary indexing all targets and off-targets, with the same layout for both formats.
+        Structure   {
+                    format:     "fits" | "zarr",
+                    target:     {data: [ref_1, ref_2, ...], ...},
+                    off_target: {data: [ref_1, ref_2, ...], ...},
+                    }
+        For fits, see get_files_paths. For zarr, each ref is the index along the source
+        dimension of the store, and zarr_path and meta (coordinates and attributes) are added.
+    """
+    if rims_format == "fits":
+        paths = get_files_paths(root)
+        paths["format"] = "fits"
+        return paths
+
+    import xarray as xr
+
+    zarr_path = os.path.join(root, ZARR_NAME)
+    with xr.open_zarr(zarr_path, consolidated=True) as ds:
+        attrs = dict(ds.attrs)
+        time = ds["time"].values
+        meta = {
+            "attrs": attrs,
+            "sizes": {dim: int(size) for dim, size in ds.sizes.items()},
+            "stokes": [str(s) for s in ds["stokes"].values],
+            "name": [str(n) for n in ds["name"].values],
+            "src_type": [str(t) for t in ds["src_type"].values],
+            "ra": [float(r) for r in ds["ra"].values],
+            "dec": [float(d) for d in ds["dec"].values],
+            # same delta time as the FITS CDELT1, fall back to the time grid
+            "cdelt1": float(attrs.get("CDELT1", time[1] - time[0] if time.size > 1 else 1.0)),
+        }
+        for key in ["facet", "tessel"]:
+            if key in ds.coords:
+                meta[key] = [int(v) for v in ds[key].values]
+        is_off = ds["is_off"].values.astype(bool)
+
+    LOGGER.debug(f"Read zarr metadata from {zarr_path}: {meta['sizes']}")
+    return {
+        "format": "zarr",
+        "zarr_path": zarr_path,
+        "meta": meta,
+        "target": {"data": [int(i) for i in np.flatnonzero(~is_off)]},
+        "off_target": {"data": [int(i) for i in np.flatnonzero(is_off)]},
+    }

@@ -21,6 +21,8 @@ matplotlib = "^3.9.4"
 jax = "*"
 jaxlib = "*"
 omegaconf = "*"
+xarray = "*"
+zarr = ">=3"
 
 [tool.poetry.scripts]
 inspect-dynspec = "inspect_dynspec.inspect_dynspec:inspect_dynspec"
