@@ -30,6 +30,13 @@ jobs:
         with:
           fetch-depth: 0  # Fetch full history
 
+      # Python for the runner that drives build-cargo (not the images).
+      # Pinned: ubuntu-latest's default python can be newer than stimela allows.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Debug - List modified files
         run: git diff --name-only HEAD~1 HEAD  # Compare last two commits
 
@@ -48,7 +55,7 @@ jobs:
       - name: Conditionally run ms2dynspec build
         run: |
           CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
-          if echo "$CHANGED_FILES" | grep -q "inspect_dynspec/images/ms2dynspec/Dockerfile.branch"; then
+          if echo "$CHANGED_FILES" | grep -qE "inspect_dynspec/images/ms2dynspec/Dockerfile.branch|.github/workflows/publish-cargo-master.yml"; then
             build-cargo -m inspect_dynspec/images/cargo-manifest.yml ms2dynspec
           else
             echo "No relevant changes detected, skipping ms2dynspec build."
