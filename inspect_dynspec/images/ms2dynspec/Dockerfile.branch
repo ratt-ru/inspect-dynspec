@@ -30,17 +30,27 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN python -m pip install --no-cache-dir wheel
 
+# DDFacet, RIMS and the packages that broke or changed RIMS before are pinned, so a
+# rebuild gives the same image. Change a pin only together with BUNDLE_VERSION in
+# ../cargo-manifest.yml: the new image then gets a new tag, and the tag breifast uses
+# is left as it is.
+
+# DDFacet: head of MassiveMerge_PR_Py3.12 (2026-05-07)
 RUN git clone https://github.com/saopicc/DDFacet.git && \
     cd DDFacet && \
-    git checkout MassiveMerge_PR_Py3.12 && \
+    git checkout 89497ab2ce3cf53370b631c9507d63f3dd78dd1c && \
     cd .. && \
     python -m pip install ./DDFacet
 
 # Install meqtrees-cattery
 RUN python -m pip install --no-cache-dir "meqtrees-cattery"
 
-# Install DynSpecMS from the specified GitHub repository
-RUN python -m pip install --no-cache-dir "git+https://github.com/saopicc/RIMS.git@SplitCatalog_fixes_jax"
+# RIMS (DynSpecMS) at a commit of SplitCatalog_fixes_jax. RIMS reads MSs with xarray-ms,
+# whose 0.5.14 renamed CORRECTED_DATA/MODEL_DATA; jax runs the RIMS kernels. All three are
+# pinned to the versions RIMS was tested with.
+RUN python -m pip install --no-cache-dir \
+    "git+https://github.com/saopicc/RIMS.git@fc0361c62d77ca5c21be5e2f161bd6f62e2aa5f4" \
+    "xarray-ms==0.5.14" "arcae==0.5.9" "jax==0.11.2" "jaxlib==0.11.2"
 
 # set XDG cache (normally at ~/.cache)
 ENV XDG_CACHE_HOME /var/cache

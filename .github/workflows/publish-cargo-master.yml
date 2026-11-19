@@ -55,7 +55,8 @@ jobs:
       - name: Conditionally run ms2dynspec build
         run: |
           CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
-          if echo "$CHANGED_FILES" | grep -qE "inspect_dynspec/images/ms2dynspec/Dockerfile.branch|.github/workflows/publish-cargo-master.yml"; then
+          # the manifest holds BUNDLE_VERSION: a version bump must build ms2dynspec under the new tag too
+          if echo "$CHANGED_FILES" | grep -qE "inspect_dynspec/images/ms2dynspec/Dockerfile.branch|inspect_dynspec/images/cargo-manifest.yml|.github/workflows/publish-cargo-master.yml"; then
             build-cargo -m inspect_dynspec/images/cargo-manifest.yml ms2dynspec
           else
             echo "No relevant changes detected, skipping ms2dynspec build."

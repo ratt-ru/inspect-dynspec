@@ -39,6 +39,15 @@ Suffix identification:
 - `_var_a.png` : The analytical variance calculated from the W and W2 weights. It is applied to the `rawdata` to produce the `analytically denoised` product.
 - `_var_e.png` : The excess variance calculated from the RIMS off target dynamic spectra. It is applied to the `analytically denoised` product to produce the fully denoised product.
 
+### Container images:
+CI builds two images on every push to `master` and pushes them to `quay.io/talonmyburgh`: `inspectdynspec` (this tool) and `ms2dynspec` (RIMS). They are tagged `master-dspec<version>`, where `<version>` is the version in `pyproject.toml`. breifast pins one tag in `breifast-tron/breifast/cabs/dynspec-cabs.yml`.
+
+The RIMS image installs fixed commits and versions (see `inspect_dynspec/images/ms2dynspec/Dockerfile.branch`), so rebuilding it gives the same image. To release a new image:
+1. Bump the version in both `pyproject.toml` and `BUNDLE_VERSION` in `inspect_dynspec/images/cargo-manifest.yml` (e.g. `0.0.3` and `dspec0.0.3`), and change any pins in the Dockerfiles.
+2. Push to `master`. CI builds and pushes `master-dspec0.0.3`; earlier tags are left as they are.
+3. Test the new image, then create a GitHub release named `0.0.3`. From then on CI refuses to push over the `0.0.3` images.
+4. Point breifast at `master-dspec0.0.3`.
+
 ### Licensing:
 MIT License
 

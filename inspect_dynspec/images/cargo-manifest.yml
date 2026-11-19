@@ -1,12 +1,16 @@
 metadata:
   # name of python package
   PACKAGE: inspect-dynspec
-  # its repository -- leave unset to skip version checks
-  ## GITHUB_REPOSITORY: ratt-ru/breifast
+  # its repository -- leave unset to skip version checks.
+  # Once a GitHub release named after the package version (e.g. 0.0.2, no "v") exists,
+  # build-cargo refuses to push over that version's images, so the tags breifast pins never change.
+  GITHUB_REPOSITORY: ratt-ru/inspect-dynspec
   # registry to use. Use module::filename.yml::variable format to pull from a config file inside a python module
   REGISTRY: quay.io/talonmyburgh
-  # image bundle version. Use module::filename.yml::variable format to pull from a config file inside a python module
-  BUNDLE_VERSION: dspec0.0.1
+  # image bundle version. Use module::filename.yml::variable format to pull from a config file inside a python module.
+  # Images are tagged <branch>-<BUNDLE_VERSION>, e.g. master-dspec0.0.2. Keep it equal to
+  # "dspec" + the version in pyproject.toml, and bump both to make a new image.
+  BUNDLE_VERSION: dspec0.0.2
   # prefix to be removed from image version when comparing to python package version
   BUNDLE_VERSION_PREFIX: dspec
   # path to images. Use module::filename to refer to content of module
@@ -35,6 +39,8 @@ images:
     assign:
       CMD: inspect-dynspec --help
       default_python_version: '3.10'
+      # the commit CI is building, so the image holds the inspect-dynspec it was built from
+      commit: ENV::GITHUB_SHA
     versions:
       '{branch}':
         dockerfile: Dockerfile.branch
